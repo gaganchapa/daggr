@@ -39,6 +39,9 @@ with Graph(name="Text Pipeline") as graph:
 graph.launch()
 ```
 
+<img width="1512" height="775" alt="image" src="https://github.com/user-attachments/assets/5ebf52f3-b3bc-4cbc-b32a-8c1dee2322e1" />
+
+
 ### Node Types
 
 **GradioNode** - Connect to Gradio apps (Spaces or URLs):
