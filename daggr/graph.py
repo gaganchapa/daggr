@@ -57,9 +57,35 @@ class Graph:
     def get_connections(self) -> List[tuple]:
         return [edge.as_tuple() for edge in self._edges]
 
+    def _validate_edges(self) -> None:
+        errors = []
+        for edge in self._edges:
+            source_node = edge.source_node
+            target_node = edge.target_node
+            source_port = edge.source_port
+            target_port = edge.target_port
+
+            if source_port not in source_node._output_ports:
+                available = ", ".join(source_node._output_ports) or "(none)"
+                errors.append(
+                    f"Output port '{source_port}' not found on node '{source_node._name}'. "
+                    f"Available outputs: {available}"
+                )
+
+            if target_port not in target_node._input_ports:
+                available = ", ".join(target_node._input_ports) or "(none)"
+                errors.append(
+                    f"Input port '{target_port}' not found on node '{target_node._name}'. "
+                    f"Available inputs: {available}"
+                )
+
+        if errors:
+            raise ValueError("Invalid port connections:\n  - " + "\n  - ".join(errors))
+
     def launch(self, **kwargs):
         from daggr.ui import UIGenerator
 
+        self._validate_edges()
         ui_generator = UIGenerator(self)
         demo = ui_generator.generate_ui()
         if hasattr(ui_generator, "_custom_css"):

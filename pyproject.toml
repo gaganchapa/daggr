@@ -11,8 +11,8 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "gradio-client>=0.15.0",
-    "gradio>=5.0.0",
+    "gradio-client>=2.0.0",
+    "gradio>=6.0.0",
     "networkx>=3.0",
 ]
 classifiers = [

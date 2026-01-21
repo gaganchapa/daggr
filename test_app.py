@@ -29,35 +29,35 @@ def combine_audio(segments: list, mode: str = "full") -> dict:
 
 
 host_voice_input = InputNode(
-    inputs=[gr.Textbox(label="Host Voice", placeholder="Warm, professional...")],
+    inputs=[gr.Textbox(label="host_voice", placeholder="Warm, professional...")],
     name="Host Voice Description",
 )
 
 guest_voice_input = InputNode(
-    inputs=[gr.Textbox(label="Guest Voice", placeholder="Energetic, friendly...")],
+    inputs=[gr.Textbox(label="guest_voice", placeholder="Energetic, friendly...")],
     name="Guest Voice Description",
 )
 
 topic_input = InputNode(
-    inputs=[gr.Textbox(label="Topic", placeholder="AI in healthcare...")],
+    inputs=[gr.Textbox(label="topic", placeholder="AI in healthcare...")],
     name="Podcast Topic",
 )
 
 host_voice_gen = FnNode(
     fn=mock_maya1_voice_gen,
-    outputs=[gr.Audio(label="Host Voice")],
+    outputs=[gr.Audio(label="voice")],
     name="Generate Host Voice",
 )
 
 guest_voice_gen = FnNode(
     fn=mock_maya1_voice_gen,
-    outputs=[gr.Audio(label="Guest Voice")],
+    outputs=[gr.Audio(label="voice")],
     name="Generate Guest Voice",
 )
 
 dialogue_gen = FnNode(
     fn=mock_generate_dialogue,
-    outputs=[gr.JSON(label="Dialogue")],
+    outputs=[gr.JSON(label="dialogue")],
     name="Generate Dialogue",
 )
 
@@ -69,28 +69,28 @@ tts_map = MapNode(
 
 combine_test = FnNode(
     fn=lambda segments: combine_audio(segments, "test"),
-    outputs=[gr.Audio(label="Test Preview")],
+    outputs=[gr.Audio(label="combined")],
     name="Test Run",
 )
 
 combine_full = FnNode(
     fn=lambda segments: combine_audio(segments, "full"),
-    outputs=[gr.Audio(label="Full Podcast")],
+    outputs=[gr.Audio(label="combined")],
     name="Full Run",
 )
 
 
 graph = Graph(name="Podcast Generator")
 
-graph.edge(host_voice_input.Host_Voice, host_voice_gen.text_description).edge(
-    guest_voice_input.Guest_Voice, guest_voice_gen.text_description
-).edge(topic_input.Topic, dialogue_gen.topic).edge(
-    dialogue_gen.dialogue, tts_map.items
-).edge(host_voice_gen.voice, tts_map.host_voice).edge(
-    guest_voice_gen.voice, tts_map.guest_voice
-).edge(tts_map.results, combine_test.segments).edge(
-    tts_map.results, combine_full.segments
-)
+graph.edge(host_voice_input.host_voice, host_voice_gen.text_description) \
+    .edge(guest_voice_input.guest_voice, guest_voice_gen.text_description) \
+    .edge(topic_input.topic, dialogue_gen.topic) \
+    .edge(dialogue_gen.dialogue, tts_map.items) \
+    .edge(host_voice_gen.voice, tts_map.host_voice) \
+    .edge(guest_voice_gen.voice, tts_map.guest_voice) \
+    .edge(tts_map.results, combine_test.segments) \
+    .edge(tts_map.results, combine_full.segments)
 
 
-graph.launch()
+if __name__ == "__main__":
+    graph.launch()
