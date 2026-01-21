@@ -82,14 +82,15 @@ combine_full = FnNode(
 
 graph = Graph(name="Podcast Generator")
 
-graph.edge(host_voice_input.host_voice, host_voice_gen.text_description) \
-    .edge(guest_voice_input.guest_voice, guest_voice_gen.text_description) \
-    .edge(topic_input.topic, dialogue_gen.topic) \
-    .edge(dialogue_gen.dialogue, tts_map.items) \
-    .edge(host_voice_gen.voice, tts_map.host_voice) \
-    .edge(guest_voice_gen.voice, tts_map.guest_voice) \
-    .edge(tts_map.results, combine_test.segments) \
-    .edge(tts_map.results, combine_full.segments)
+graph.edge(host_voice_input.host_voice, host_voice_gen.text_description).edge(
+    guest_voice_input.guest_voice, guest_voice_gen.text_description
+).edge(topic_input.topic, dialogue_gen.topic).edge(
+    dialogue_gen.dialogue, tts_map.items
+).edge(host_voice_gen.voice, tts_map.host_voice).edge(
+    guest_voice_gen.voice, tts_map.guest_voice
+).edge(tts_map.results, combine_test.segments).edge(
+    tts_map.results, combine_full.segments
+)
 
 
 if __name__ == "__main__":
