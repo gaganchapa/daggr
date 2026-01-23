@@ -6,7 +6,6 @@ from daggr.node import (
     FnNode,
     GradioNode,
     InferenceNode,
-    InputNode,
     InteractionNode,
     Node,
 )
@@ -17,7 +16,6 @@ __all__ = [
     "GradioNode",
     "InferenceNode",
     "FnNode",
-    "InputNode",
     "InteractionNode",
     "Node",
     "ops",

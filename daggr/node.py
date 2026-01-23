@@ -3,21 +3,60 @@ from __future__ import annotations
 import inspect
 import warnings
 from abc import ABC
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from daggr.port import Port, PortNamespace
+
+
+def _is_gradio_component(obj: Any) -> bool:
+    if obj is None:
+        return False
+    class_name = obj.__class__.__name__
+    module = getattr(obj.__class__, "__module__", "")
+    return "gradio" in module or class_name in (
+        "Textbox",
+        "TextArea",
+        "Audio",
+        "Image",
+        "JSON",
+        "Markdown",
+        "Number",
+        "Checkbox",
+        "Dropdown",
+        "Radio",
+        "Slider",
+        "File",
+        "Video",
+        "Gallery",
+        "Chatbot",
+        "Text",
+    )
+
+
+def _get_component_label(component: Any, fallback: str) -> str:
+    if hasattr(component, "label") and component.label:
+        return component.label
+    return fallback
+
+
+def _is_component_visible(component: Any) -> bool:
+    if hasattr(component, "visible"):
+        return component.visible
+    return True
 
 
 class Node(ABC):
     _id_counter = 0
 
-    def __init__(self, name: Optional[str] = None, outputs: Optional[List[Any]] = None):
+    def __init__(self, name: Optional[str] = None):
         self._id = Node._id_counter
         Node._id_counter += 1
         self._name = name or ""
         self._input_ports: List[str] = []
         self._output_ports: List[str] = []
-        self._output_components: List[Any] = outputs or []
+        self._input_components: Dict[str, Any] = {}
+        self._output_components: Dict[str, Any] = {}
+        self._fixed_inputs: Dict[str, Any] = {}
 
     def __getattr__(self, name: str) -> Port:
         if name.startswith("_"):
@@ -55,6 +94,13 @@ class Node(ABC):
                 f"Use node._inputs.{underscore_ports[0]} or node._outputs.{underscore_ports[0]} to access."
             )
 
+    def _get_visible_output_components(self) -> List[Any]:
+        return [
+            comp
+            for port, comp in self._output_components.items()
+            if _is_component_visible(comp)
+        ]
+
     def __repr__(self):
         return f"{self.__class__.__name__}(name={self._name})"
 
@@ -62,60 +108,40 @@ class Node(ABC):
 class GradioNode(Node):
     def __init__(
         self,
-        src: str,
+        space_or_url: str,
+        api_name: Optional[str] = None,
         name: Optional[str] = None,
-        inputs: Optional[List[str]] = None,
-        outputs: Optional[List[Any]] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+        outputs: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(name, outputs)
-        self._src = src
-        self._inputs_override = inputs
+        super().__init__(name)
+        self._src = space_or_url
+        self._api_name = api_name
         self._discovered = False
+
         if not self._name:
             self._name = self._src.split("/")[-1]
 
-    def discover_api(self):
-        if self._discovered:
-            return
-        try:
-            from gradio_client import Client
-
-            client = Client(self._src)
-            api_info = client.view_api(return_format="dict")
-
-            if isinstance(api_info, dict):
-                endpoints = api_info.get("named_endpoints", {})
-                predict_info = None
-                for key, value in endpoints.items():
-                    if "/predict" in key or key == "predict":
-                        predict_info = value
-                        break
-                if not predict_info and endpoints:
-                    predict_info = list(endpoints.values())[0]
-
-                if predict_info:
-                    params = predict_info.get("parameters", [])
-                    returns = predict_info.get("returns", [])
-                    self._input_ports = [
-                        p.get("parameter_name") or p.get("label") or f"input_{i}"
-                        for i, p in enumerate(params)
-                    ]
-                    self._output_ports = [
-                        r.get("label") or f"output_{i}" for i, r in enumerate(returns)
-                    ]
-        except Exception as e:
-            print(f"Warning: Could not discover API for {self._name}: {e}")
-
-        if self._inputs_override:
-            self._input_ports = self._inputs_override
-
-        if not self._output_ports:
-            self._output_ports = ["output"]
-        if not self._input_ports:
-            self._input_ports = ["input"]
-
-        self._discovered = True
+        self._process_inputs(inputs or {})
+        self._process_outputs(outputs or {})
         self._validate_ports()
+
+    def _process_inputs(self, inputs: Dict[str, Any]):
+        for port_name, value in inputs.items():
+            self._input_ports.append(port_name)
+            if _is_gradio_component(value):
+                self._input_components[port_name] = value
+            else:
+                self._fixed_inputs[port_name] = value
+
+    def _process_outputs(self, outputs: Dict[str, Any]):
+        for port_name, component in outputs.items():
+            self._output_ports.append(port_name)
+            if _is_gradio_component(component):
+                self._output_components[port_name] = component
+
+    def discover_api(self):
+        pass
 
 
 class InferenceNode(Node):
@@ -123,15 +149,40 @@ class InferenceNode(Node):
         self,
         model: str,
         name: Optional[str] = None,
-        outputs: Optional[List[Any]] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+        outputs: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(name, outputs)
+        super().__init__(name)
         self._model = model
-        self._input_ports = ["input"]
-        self._output_ports = ["output"]
+
         if not self._name:
             self._name = self._model.split("/")[-1]
+
+        if inputs:
+            self._process_inputs(inputs)
+        else:
+            self._input_ports = ["input"]
+
+        if outputs:
+            self._process_outputs(outputs)
+        else:
+            self._output_ports = ["output"]
+
         self._validate_ports()
+
+    def _process_inputs(self, inputs: Dict[str, Any]):
+        for port_name, value in inputs.items():
+            self._input_ports.append(port_name)
+            if _is_gradio_component(value):
+                self._input_components[port_name] = value
+            else:
+                self._fixed_inputs[port_name] = value
+
+    def _process_outputs(self, outputs: Dict[str, Any]):
+        for port_name, component in outputs.items():
+            self._output_ports.append(port_name)
+            if _is_gradio_component(component):
+                self._output_components[port_name] = component
 
 
 class FnNode(Node):
@@ -139,30 +190,44 @@ class FnNode(Node):
         self,
         fn: Callable,
         name: Optional[str] = None,
-        outputs: Optional[List[Any]] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+        outputs: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(name, outputs)
+        super().__init__(name)
         self._fn = fn
-        self._discover_signature()
+
         if not self._name:
             self._name = self._fn.__name__
+
+        if inputs:
+            self._process_inputs(inputs)
+        else:
+            self._discover_signature()
+
+        if outputs:
+            self._process_outputs(outputs)
+        else:
+            self._output_ports = ["output"]
+
         self._validate_ports()
 
     def _discover_signature(self):
         sig = inspect.signature(self._fn)
         self._input_ports = list(sig.parameters.keys())
-        if self._output_components:
-            self._output_ports = [
-                self._get_component_label(c, i)
-                for i, c in enumerate(self._output_components)
-            ]
-        else:
-            self._output_ports = ["output"]
 
-    def _get_component_label(self, component: Any, index: int) -> str:
-        if hasattr(component, "label") and component.label:
-            return component.label
-        return f"output_{index}"
+    def _process_inputs(self, inputs: Dict[str, Any]):
+        for port_name, value in inputs.items():
+            self._input_ports.append(port_name)
+            if _is_gradio_component(value):
+                self._input_components[port_name] = value
+            else:
+                self._fixed_inputs[port_name] = value
+
+    def _process_outputs(self, outputs: Dict[str, Any]):
+        for port_name, component in outputs.items():
+            self._output_ports.append(port_name)
+            if _is_gradio_component(component):
+                self._output_components[port_name] = component
 
 
 class InteractionNode(Node):
@@ -170,38 +235,37 @@ class InteractionNode(Node):
         self,
         name: Optional[str] = None,
         interaction_type: str = "generic",
-        outputs: Optional[List[Any]] = None,
-    ):
-        super().__init__(name, outputs)
-        self._interaction_type = interaction_type
-        self._input_ports = ["input"]
-        self._output_ports = ["output"]
-        if not self._name:
-            self._name = f"interaction_{self._id}"
-        self._validate_ports()
-
-
-class InputNode(Node):
-    _instance_counter = 0
-
-    def __init__(
-        self,
-        inputs: List[Any],
-        name: Optional[str] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+        outputs: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(name)
-        InputNode._instance_counter += 1
-        self._input_components = inputs
-        self._input_ports = []
-        self._output_ports = []
-        for i, component in enumerate(inputs):
-            label = self._get_component_label(component, i)
-            self._output_ports.append(label)
+        self._interaction_type = interaction_type
+
+        if inputs:
+            self._process_inputs(inputs)
+        else:
+            self._input_ports = ["input"]
+
+        if outputs:
+            self._process_outputs(outputs)
+        else:
+            self._output_ports = ["output"]
+
         if not self._name:
-            self._name = f"input_{InputNode._instance_counter}"
+            self._name = f"interaction_{self._id}"
+
         self._validate_ports()
 
-    def _get_component_label(self, component: Any, index: int) -> str:
-        if hasattr(component, "label") and component.label:
-            return component.label
-        return f"input_{index}"
+    def _process_inputs(self, inputs: Dict[str, Any]):
+        for port_name, value in inputs.items():
+            self._input_ports.append(port_name)
+            if _is_gradio_component(value):
+                self._input_components[port_name] = value
+            else:
+                self._fixed_inputs[port_name] = value
+
+    def _process_outputs(self, outputs: Dict[str, Any]):
+        for port_name, component in outputs.items():
+            self._output_ports.append(port_name)
+            if _is_gradio_component(component):
+                self._output_components[port_name] = component

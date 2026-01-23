@@ -1128,7 +1128,6 @@ class UIGenerator:
             "GradioNode": "GRADIO",
             "InferenceNode": "MODEL",
             "InteractionNode": "ACTION",
-            "InputNode": "INPUT",
         }
         class_name = node.__class__.__name__
         return type_map.get(class_name, class_name.upper())
@@ -1146,12 +1145,18 @@ class UIGenerator:
         return None
 
     def _is_entry_or_interaction(self, node_name: str) -> bool:
-        from daggr.node import InputNode, InteractionNode
+        from daggr.node import InteractionNode
 
         node = self.graph.nodes[node_name]
-        if isinstance(node, (InteractionNode, InputNode)):
+        if isinstance(node, InteractionNode):
+            return True
+        if node._input_components:
             return True
         return self.graph._nx_graph.in_degree(node_name) == 0
+
+    def _has_component_inputs(self, node_name: str) -> bool:
+        node = self.graph.nodes[node_name]
+        return bool(node._input_components)
 
     def _get_node_name(self, node) -> str:
         return node._name
@@ -1166,26 +1171,28 @@ class UIGenerator:
             "Chatbot": "json",
             "Image": "image",
             "Number": "number",
+            "Markdown": "markdown",
+            "Text": "text",
         }
         return type_map.get(class_name, "text")
 
     def _build_input_components(self, node) -> List[Dict[str, Any]]:
-        from daggr.node import InputNode
-
-        if not isinstance(node, InputNode):
+        if not node._input_components:
             return []
 
         components = []
-        for comp in node._input_components:
+        for port_name, comp in node._input_components.items():
             comp_type = self._get_component_type(comp)
-            label = getattr(comp, "label", "") or f"input_{len(components)}"
+            label = getattr(comp, "label", "") or port_name
             placeholder = getattr(comp, "placeholder", "") or ""
+            default_value = getattr(comp, "value", "") or ""
             components.append(
                 {
                     "type": comp_type,
                     "label": label,
+                    "port_name": port_name,
                     "placeholder": placeholder,
-                    "value": "",
+                    "value": default_value,
                     "is_textbox": comp_type == "textbox",
                     "is_textarea": comp_type == "textarea",
                 }
@@ -1195,30 +1202,29 @@ class UIGenerator:
     def _build_output_components(
         self, node, result: Any = None
     ) -> List[Dict[str, Any]]:
-        if not hasattr(node, "_output_components") or not node._output_components:
+        if not node._output_components:
             return []
 
         components = []
-        for i, comp in enumerate(node._output_components):
+        for port_name, comp in node._output_components.items():
+            visible = getattr(comp, "visible", True)
+            if visible is False:
+                continue
+
             comp_type = self._get_component_type(comp)
-            label = getattr(comp, "label", "") or f"output_{i}"
+            label = getattr(comp, "label", "") or port_name
 
             value = None
             if result is not None:
                 if isinstance(result, dict):
-                    port_name = (
-                        node._output_ports[i]
-                        if i < len(node._output_ports)
-                        else f"output_{i}"
-                    )
                     value = result.get(port_name, result.get(label))
-                elif isinstance(result, (list, tuple)) and i < len(result):
-                    value = result[i]
                 else:
                     value = result
 
             if comp_type == "json" and value is not None:
                 value = json.dumps(value, indent=2, default=str)
+            elif comp_type == "markdown" and value is not None:
+                value = str(value)
             elif value is not None:
                 value = str(value)
 
@@ -1226,10 +1232,12 @@ class UIGenerator:
                 {
                     "type": comp_type,
                     "label": label,
+                    "port_name": port_name,
                     "value": value or "",
                     "is_audio": comp_type == "audio",
                     "is_json": comp_type == "json",
-                    "is_text": comp_type == "text",
+                    "is_text": comp_type in ("text", "textbox"),
+                    "is_markdown": comp_type == "markdown",
                 }
             )
         return components
@@ -1313,8 +1321,6 @@ class UIGenerator:
         input_values: Dict[str, Any] | None = None,
         history: Dict[str, Dict[str, List[Dict]]] | None = None,
     ) -> dict:
-        from daggr.node import InputNode
-
         node_results = node_results or {}
         node_statuses = node_statuses or {}
         input_values = input_values or {}
@@ -1347,18 +1353,12 @@ class UIGenerator:
             node = self.graph.nodes[node_name]
             x, y = node_positions.get(node_name, (50, 50))
 
-            has_input = self._is_entry_or_interaction(node_name) and not isinstance(
-                node, InputNode
-            )
+            has_component_inputs = self._has_component_inputs(node_name)
 
             result = node_results.get(node_name)
             result_str = ""
             is_scattered = self._has_scattered_input(node_name)
-            if (
-                result is not None
-                and not hasattr(node, "_output_components")
-                and not is_scattered
-            ):
+            if result is not None and not node._output_components and not is_scattered:
                 if isinstance(result, dict):
                     display_result = {
                         k: v for k, v in result.items() if not k.startswith("_")
@@ -1371,8 +1371,17 @@ class UIGenerator:
 
             node_id = node_name.replace(" ", "_").replace("-", "_")
 
+            connected_input_ports = set()
+            for edge in self.graph._edges:
+                if edge.target_node._name == node_name:
+                    connected_input_ports.add(edge.target_port)
+
             input_ports_data = []
             for port in node._input_ports or []:
+                if port in node._input_components:
+                    continue
+                if port in node._fixed_inputs:
+                    continue
                 port_history = history.get(node_name, {}).get(port, [])
                 input_ports_data.append(
                     {
@@ -1384,8 +1393,9 @@ class UIGenerator:
             input_components = self._build_input_components(node)
             if input_components and node_name in input_values:
                 for comp in input_components:
-                    if comp["label"] in input_values[node_name]:
-                        comp["value"] = input_values[node_name][comp["label"]]
+                    port_name = comp.get("port_name", comp["label"])
+                    if port_name in input_values[node_name]:
+                        comp["value"] = input_values[node_name][port_name]
 
             output_components = self._build_output_components(node, result)
             scattered_items = (
@@ -1398,7 +1408,7 @@ class UIGenerator:
                 item_output_type = self._get_component_type(scattered_edge.item_output)
 
             is_output = self._is_output_node(node_name)
-            is_input = isinstance(node, InputNode)
+            is_entry = self.graph._nx_graph.in_degree(node_name) == 0
 
             nodes.append(
                 {
@@ -1409,7 +1419,7 @@ class UIGenerator:
                     "outputs": node._output_ports or [],
                     "x": x,
                     "y": y,
-                    "has_input": has_input,
+                    "has_input": False,
                     "input_value": input_values.get(node_name, ""),
                     "input_components": input_components,
                     "output_components": output_components,
@@ -1420,7 +1430,7 @@ class UIGenerator:
                     "status": node_statuses.get(node_name, "pending"),
                     "result": result_str,
                     "is_output_node": is_output,
-                    "is_input_node": is_input,
+                    "is_input_node": is_entry and not has_component_inputs,
                 }
             )
 
@@ -1450,7 +1460,7 @@ class UIGenerator:
         }
 
     def _execute_workflow(self, canvas_data: dict) -> dict:
-        from daggr.node import InputNode, InteractionNode
+        from daggr.node import InteractionNode
 
         self.session_id = canvas_data.get("session_id") if canvas_data else None
         if not self.session_id:
@@ -1468,22 +1478,16 @@ class UIGenerator:
         entry_inputs: Dict[str, Dict[str, Any]] = {}
         for node_name in execution_order:
             node = self.graph.nodes[node_name]
-            if isinstance(node, InputNode):
+            if node._input_components:
                 node_input_values = input_values.get(node_name, {})
                 if isinstance(node_input_values, dict):
                     entry_inputs[node_name] = node_input_values
                 else:
-                    entry_inputs[node_name] = (
-                        {node._output_ports[0]: node_input_values}
-                        if node._output_ports
-                        else {}
-                    )
-            elif self._is_entry_or_interaction(node_name):
+                    first_port = list(node._input_components.keys())[0]
+                    entry_inputs[node_name] = {first_port: node_input_values}
+            elif isinstance(node, InteractionNode):
                 value = input_values.get(node_name, "")
-                if isinstance(node, InteractionNode):
-                    port = node._input_ports[0] if node._input_ports else "input"
-                else:
-                    port = node._input_ports[0] if node._input_ports else "input"
+                port = node._input_ports[0] if node._input_ports else "input"
                 entry_inputs[node_name] = {port: value}
 
         node_results = {}
@@ -1500,38 +1504,36 @@ class UIGenerator:
 
                 self.state.save_result(self.session_id, node_name, result)
 
-                node = self.graph.nodes[node_name]
-                if not isinstance(node, InputNode):
-                    for edge in self.graph._edges:
-                        if edge.source_node._name == node_name:
-                            target_node = edge.target_node._name
-                            target_port = edge.target_port
-                            source_port = edge.source_port
+                for edge in self.graph._edges:
+                    if edge.source_node._name == node_name:
+                        target_node = edge.target_node._name
+                        target_port = edge.target_port
+                        source_port = edge.source_port
 
-                            if isinstance(result, dict) and source_port in result:
-                                value = result[source_port]
-                            else:
-                                value = result
+                        if isinstance(result, dict) and source_port in result:
+                            value = result[source_port]
+                        else:
+                            value = result
 
-                            source_input = input_values.get(node_name, {})
-                            self.state.add_to_history(
-                                self.session_id,
-                                target_node,
-                                target_port,
-                                value,
-                                source_input,
-                            )
+                        source_input = input_values.get(node_name, {})
+                        self.state.add_to_history(
+                            self.session_id,
+                            target_node,
+                            target_port,
+                            value,
+                            source_input,
+                        )
 
-                            if target_node not in history:
-                                history[target_node] = {}
-                            if target_port not in history[target_node]:
-                                history[target_node][target_port] = []
-                            history[target_node][target_port].append(
-                                {
-                                    "value": value,
-                                    "source_input": source_input,
-                                }
-                            )
+                        if target_node not in history:
+                            history[target_node] = {}
+                        if target_port not in history[target_node]:
+                            history[target_node][target_port] = []
+                        history[target_node][target_port].append(
+                            {
+                                "value": value,
+                                "source_input": source_input,
+                            }
+                        )
 
         except Exception as e:
             if len(node_results) < len(execution_order):
@@ -1695,7 +1697,7 @@ class UIGenerator:
         return list(ancestors)
 
     def _execute_to_node(self, canvas_data: dict, target_node: str) -> dict:
-        from daggr.node import InputNode
+        from daggr.node import InteractionNode
 
         self.session_id = canvas_data.get("session_id") if canvas_data else None
         if not self.session_id:
@@ -1713,17 +1715,14 @@ class UIGenerator:
         entry_inputs: Dict[str, Dict[str, Any]] = {}
         for node_name in nodes_to_execute:
             node = self.graph.nodes[node_name]
-            if isinstance(node, InputNode):
+            if node._input_components:
                 node_input_values = input_values.get(node_name, {})
                 if isinstance(node_input_values, dict):
                     entry_inputs[node_name] = node_input_values
                 else:
-                    entry_inputs[node_name] = (
-                        {node._output_ports[0]: node_input_values}
-                        if node._output_ports
-                        else {}
-                    )
-            elif self._is_entry_or_interaction(node_name):
+                    first_port = list(node._input_components.keys())[0]
+                    entry_inputs[node_name] = {first_port: node_input_values}
+            elif isinstance(node, InteractionNode):
                 value = input_values.get(node_name, "")
                 port = node._input_ports[0] if node._input_ports else "input"
                 entry_inputs[node_name] = {port: value}

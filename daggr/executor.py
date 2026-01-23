@@ -93,58 +93,102 @@ class SequentialExecutor:
         return inputs
 
     def _execute_single_node(self, node_name: str, inputs: Dict[str, Any]) -> Any:
-        from daggr.node import (
-            FnNode,
-            GradioNode,
-            InferenceNode,
-            InputNode,
-            InteractionNode,
-        )
+        from daggr.node import FnNode, GradioNode, InferenceNode, InteractionNode
 
         node = self.graph.nodes[node_name]
 
-        if isinstance(node, InputNode):
-            result = {}
-            for port in node._output_ports:
-                result[port] = inputs.get(port, "")
+        all_inputs = dict(node._fixed_inputs)
+        for port_name, component in node._input_components.items():
+            if hasattr(component, "value") and component.value is not None:
+                all_inputs[port_name] = component.value
+        all_inputs.update(inputs)
 
-        elif isinstance(node, GradioNode):
+        if isinstance(node, GradioNode):
             client = self._get_client(node_name)
             if client:
-                if inputs:
-                    result = client.predict(**inputs)
-                else:
-                    result = client.predict()
+                api_name = node._api_name or "/predict"
+                if not api_name.startswith("/"):
+                    api_name = "/" + api_name
+                call_inputs = {
+                    k: v for k, v in all_inputs.items() if k in node._input_ports
+                }
+                raw_result = client.predict(api_name=api_name, **call_inputs)
+                result = self._map_gradio_result(node, raw_result)
             else:
                 result = None
 
         elif isinstance(node, FnNode):
             fn_kwargs = {}
             for port_name in node._input_ports:
-                if port_name in inputs:
-                    fn_kwargs[port_name] = inputs[port_name]
-            result = node._fn(**fn_kwargs)
+                if port_name in all_inputs:
+                    fn_kwargs[port_name] = all_inputs[port_name]
+            raw_result = node._fn(**fn_kwargs)
+            result = self._map_fn_result(node, raw_result)
 
         elif isinstance(node, InferenceNode):
             from huggingface_hub import InferenceClient
 
             client = InferenceClient(model=node._model)
-            input_value = inputs.get(
+            input_value = all_inputs.get(
                 "input",
-                inputs.get(node._input_ports[0]) if node._input_ports else None,
+                all_inputs.get(node._input_ports[0]) if node._input_ports else None,
             )
             result = client.text_generation(input_value) if input_value else None
 
         elif isinstance(node, InteractionNode):
-            result = inputs.get(
+            result = all_inputs.get(
                 "input",
-                inputs.get(node._input_ports[0]) if node._input_ports else None,
+                all_inputs.get(node._input_ports[0]) if node._input_ports else None,
             )
 
         else:
             result = None
 
         return result
+
+    def _map_gradio_result(self, node, raw_result: Any) -> Dict[str, Any]:
+        if raw_result is None:
+            return {}
+
+        output_ports = node._output_ports
+        if not output_ports:
+            return {"output": raw_result}
+
+        if isinstance(raw_result, (list, tuple)):
+            result = {}
+            for i, port_name in enumerate(output_ports):
+                if i < len(raw_result):
+                    result[port_name] = raw_result[i]
+                else:
+                    result[port_name] = None
+            return result
+        elif len(output_ports) == 1:
+            return {output_ports[0]: raw_result}
+        else:
+            return {output_ports[0]: raw_result}
+
+    def _map_fn_result(self, node, raw_result: Any) -> Dict[str, Any]:
+        if raw_result is None:
+            return {}
+
+        output_ports = node._output_ports
+        if not output_ports:
+            return {"output": raw_result}
+
+        if isinstance(raw_result, dict):
+            return raw_result
+        elif isinstance(raw_result, (list, tuple)):
+            result = {}
+            for i, port_name in enumerate(output_ports):
+                if i < len(raw_result):
+                    result[port_name] = raw_result[i]
+                else:
+                    result[port_name] = None
+            return result
+        elif len(output_ports) == 1:
+            return {output_ports[0]: raw_result}
+        else:
+            return {output_ports[0]: raw_result}
 
     def execute_node(
         self, node_name: str, user_inputs: Optional[Dict[str, Any]] = None
