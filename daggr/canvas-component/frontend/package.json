@@ -19,7 +19,8 @@
     "@gradio/utils": "0.11.1",
     "@types/katex": "^0.16.7",
     "@types/prismjs": "1.26.5",
-    "dequal": "^2.0.3"
+    "dequal": "^2.0.3",
+    "svelvet": "^11.0.5"
   },
   "devDependencies": {
     "@gradio/audio": "0.22.0",

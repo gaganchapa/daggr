@@ -8,9 +8,9 @@ from daggr.node import (
     InferenceNode,
     InputNode,
     InteractionNode,
-    MapNode,
     Node,
 )
+from daggr.port import gather, scatter
 
 __all__ = [
     "Graph",
@@ -19,7 +19,8 @@ __all__ = [
     "FnNode",
     "InputNode",
     "InteractionNode",
-    "MapNode",
     "Node",
     "ops",
+    "scatter",
+    "gather",
 ]

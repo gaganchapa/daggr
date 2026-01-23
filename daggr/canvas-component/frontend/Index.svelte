@@ -2,6 +2,7 @@
 	import { Block } from "@gradio/atoms";
 	import { StatusTracker } from "@gradio/statustracker";
 	import { Gradio } from "@gradio/utils";
+	import { onMount } from "svelte";
 
 	// Types
 	interface Port {
@@ -49,67 +50,128 @@
 	let props = $props();
 	const gradio = new Gradio<CanvasEvents, CanvasProps>(props);
 
-	// Canvas state
-	let canvasRef: HTMLDivElement;
-	let transform = $state({ x: 50, y: 50, scale: 1 });
+	// Canvas element ref
+	let canvasEl: HTMLDivElement;
+
+	// Canvas pan/zoom state
+	let transform = $state({ x: 0, y: 0, scale: 1 });
 	let isPanning = $state(false);
 	let startPan = $state({ x: 0, y: 0 });
 
-	// Derived data
-	let graphName = $derived(gradio.props.value?.name || "daggr workflow");
+	// Data from props
 	let nodes = $derived(gradio.props.value?.nodes || []);
 	let edges = $derived(gradio.props.value?.edges || []);
 
-	// Node dimensions (fixed for now)
-	const NODE_WIDTH = 280;
-	const NODE_MIN_HEIGHT = 120;
-	const PORT_HEIGHT = 24;
-	const HEADER_HEIGHT = 48;
+	// Node layout constants - MUST match CSS exactly
+	const NODE_WIDTH = 220;
+	const NODE_HEIGHT_BASE = 100;
+	const HEADER_HEIGHT = 36;
+	const HEADER_BORDER = 1;
+	const BODY_PADDING_TOP = 8;
+	const PORT_ROW_HEIGHT = 22;
+	const STATUS_HEIGHT = 26;
 
-	// Calculate node height based on ports
+	// Calculate node height
 	function getNodeHeight(node: GraphNode): number {
-		const portCount = Math.max(node.inputs.length, node.outputs.length);
-		return HEADER_HEIGHT + Math.max(portCount * PORT_HEIGHT + 40, NODE_MIN_HEIGHT - HEADER_HEIGHT);
+		const portRows = Math.max(node.inputs.length, node.outputs.length, 1);
+		return HEADER_HEIGHT + HEADER_BORDER + BODY_PADDING_TOP + (portRows * PORT_ROW_HEIGHT) + BODY_PADDING_TOP + STATUS_HEIGHT;
 	}
 
-	// Get port Y position within node
-	function getPortY(portIndex: number, totalPorts: number, nodeHeight: number): number {
-		const bodyStart = HEADER_HEIGHT + 16;
-		const bodyHeight = nodeHeight - HEADER_HEIGHT - 32;
-		if (totalPorts <= 1) return bodyStart + bodyHeight / 2;
-		const spacing = bodyHeight / (totalPorts);
-		return bodyStart + spacing * (portIndex + 0.5);
+	// Build lookup map
+	let nodeMap = $derived.by(() => {
+		const map = new Map<string, GraphNode>();
+		for (const node of nodes) {
+			map.set(node.id, node);
+		}
+		return map;
+	});
+
+	// Calculate Y position for a port (relative to node top)
+	function getPortY(portIndex: number): number {
+		return HEADER_HEIGHT + HEADER_BORDER + BODY_PADDING_TOP + (portIndex * PORT_ROW_HEIGHT) + (PORT_ROW_HEIGHT / 2);
 	}
 
-	// Generate bezier path for edge
-	function getEdgePath(edge: GraphEdge): string {
-		const fromNode = nodes.find(n => n.id === edge.from_node);
-		const toNode = nodes.find(n => n.id === edge.to_node);
-		if (!fromNode || !toNode) return "";
+	// Compute all edge paths reactively
+	let edgePaths = $derived.by(() => {
+		const paths: { id: string; d: string }[] = [];
+		
+		for (const edge of edges) {
+			const fromNode = nodeMap.get(edge.from_node);
+			const toNode = nodeMap.get(edge.to_node);
+			
+			if (!fromNode || !toNode) continue;
 
-		const fromHeight = getNodeHeight(fromNode);
-		const toHeight = getNodeHeight(toNode);
+			const fromPortIdx = fromNode.outputs.indexOf(edge.from_port);
+			const toPortIdx = toNode.inputs.findIndex(p => p.name === edge.to_port);
 
-		// Find port indices
-		const fromPortIndex = fromNode.outputs.indexOf(edge.from_port);
-		const toPortIndex = toNode.inputs.findIndex(p => p.name === edge.to_port);
+			if (fromPortIdx === -1 || toPortIdx === -1) continue;
 
-		// Calculate positions
-		const fromX = fromNode.x + NODE_WIDTH;
-		const fromY = fromNode.y + getPortY(fromPortIndex, fromNode.outputs.length, fromHeight);
-		const toX = toNode.x;
-		const toY = toNode.y + getPortY(toPortIndex, toNode.inputs.length, toHeight);
+			const fromPortY = getPortY(fromPortIdx);
+			const toPortY = getPortY(toPortIdx);
 
-		// Bezier control points
-		const dx = Math.abs(toX - fromX);
-		const controlOffset = Math.max(dx * 0.4, 80);
+			const x1 = fromNode.x + NODE_WIDTH;
+			const y1 = fromNode.y + fromPortY;
+			const x2 = toNode.x;
+			const y2 = toNode.y + toPortY;
 
-		return `M ${fromX} ${fromY} C ${fromX + controlOffset} ${fromY}, ${toX - controlOffset} ${toY}, ${toX} ${toY}`;
+			const dx = Math.abs(x2 - x1);
+			const cp = Math.max(dx * 0.4, 50);
+
+			const d = `M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`;
+			paths.push({ id: edge.id, d });
+		}
+		
+		return paths;
+	});
+
+	// Zoom to fit all nodes
+	function zoomToFit() {
+		if (nodes.length === 0 || !canvasEl) return;
+
+		const padding = 40;
+		const canvasRect = canvasEl.getBoundingClientRect();
+		const canvasWidth = canvasRect.width;
+		const canvasHeight = canvasRect.height;
+
+		// Calculate bounding box of all nodes
+		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		for (const node of nodes) {
+			const nodeHeight = getNodeHeight(node);
+			minX = Math.min(minX, node.x);
+			minY = Math.min(minY, node.y);
+			maxX = Math.max(maxX, node.x + NODE_WIDTH);
+			maxY = Math.max(maxY, node.y + nodeHeight);
+		}
+
+		const contentWidth = maxX - minX;
+		const contentHeight = maxY - minY;
+
+		// Calculate scale to fit
+		const scaleX = (canvasWidth - padding * 2) / contentWidth;
+		const scaleY = (canvasHeight - padding * 2) / contentHeight;
+		const newScale = Math.min(scaleX, scaleY, 1.5); // Cap at 150%
+
+		// Calculate translation to center
+		const centerX = (minX + maxX) / 2;
+		const centerY = (minY + maxY) / 2;
+		const newX = canvasWidth / 2 - centerX * newScale;
+		const newY = canvasHeight / 2 - centerY * newScale;
+
+		transform = { x: newX, y: newY, scale: Math.max(0.2, newScale) };
+	}
+
+	// Zoom controls
+	function zoomIn() {
+		transform.scale = Math.min(3, transform.scale * 1.2);
+	}
+
+	function zoomOut() {
+		transform.scale = Math.max(0.2, transform.scale / 1.2);
 	}
 
 	// Pan handlers
 	function handleMouseDown(e: MouseEvent) {
-		if (e.button === 0 && e.target === canvasRef) {
+		if (e.button === 0 && e.target === canvasEl) {
 			isPanning = true;
 			startPan = { x: e.clientX - transform.x, y: e.clientY - transform.y };
 		}
@@ -129,12 +191,11 @@
 	function handleWheel(e: WheelEvent) {
 		e.preventDefault();
 		const delta = e.deltaY > 0 ? 0.9 : 1.1;
-		const newScale = Math.max(0.25, Math.min(2, transform.scale * delta));
-		transform.scale = newScale;
+		transform.scale = Math.max(0.2, Math.min(3, transform.scale * delta));
 	}
 
-	// Run to node
-	function handleRunToNode(nodeName: string) {
+	function handleRunToNode(e: MouseEvent, nodeName: string) {
+		e.stopPropagation();
 		if (gradio.props.value) {
 			gradio.props.value = {
 				...gradio.props.value,
@@ -143,28 +204,34 @@
 		}
 	}
 
-	// Type badge colors
-	function getTypeBadgeClass(type: string): string {
-		const classes: Record<string, string> = {
-			'FN': 'badge-fn',
-			'INPUT': 'badge-input',
-			'MAP': 'badge-map',
-			'GRADIO': 'badge-gradio',
-			'MODEL': 'badge-model',
+	function getBadgeStyle(type: string): string {
+		const colors: Record<string, string> = {
+			'FN': '#f97316',
+			'INPUT': '#06b6d4',
+			'MAP': '#a855f7',
+			'GRADIO': '#ea580c',
+			'MODEL': '#22c55e',
 		};
-		return classes[type] || 'badge-default';
+		return `background: ${colors[type] || '#666'};`;
 	}
 
-	// Status colors
-	function getStatusClass(status: string): string {
-		const classes: Record<string, string> = {
-			'pending': 'status-pending',
-			'running': 'status-running',
-			'completed': 'status-completed',
-			'error': 'status-error',
+	function getStatusStyles(status: string): { dot: string; text: string; glow: string } {
+		const styles: Record<string, { dot: string; text: string; glow: string }> = {
+			'pending': { dot: '#444', text: '#666', glow: 'none' },
+			'running': { dot: '#f97316', text: '#fb923c', glow: '0 0 8px rgba(249, 115, 22, 0.7)' },
+			'completed': { dot: '#22c55e', text: '#4ade80', glow: '0 0 8px rgba(34, 197, 94, 0.6)' },
+			'error': { dot: '#ef4444', text: '#f87171', glow: '0 0 8px rgba(239, 68, 68, 0.6)' },
 		};
-		return classes[status] || 'status-pending';
+		return styles[status] || styles['pending'];
 	}
+
+	// Zoom to fit on mount
+	onMount(() => {
+		setTimeout(zoomToFit, 100);
+	});
+
+	// Zoom percentage display
+	let zoomPercent = $derived(Math.round(transform.scale * 100));
 </script>
 
 <Block
@@ -187,360 +254,329 @@
 		/>
 	{/if}
 
-	<!-- Canvas Container -->
 	<div 
-		class="canvas-container"
-		bind:this={canvasRef}
+		class="canvas"
+		bind:this={canvasEl}
 		onmousedown={handleMouseDown}
 		onmousemove={handleMouseMove}
 		onmouseup={handleMouseUp}
 		onmouseleave={handleMouseUp}
 		onwheel={handleWheel}
+		role="application"
 	>
-		<!-- Grid Background -->
-		<svg class="grid-background">
-			<defs>
-				<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-					<circle cx="20" cy="20" r="1" fill="rgba(249, 115, 22, 0.12)" />
-				</pattern>
-			</defs>
-			<rect width="100%" height="100%" fill="url(#grid)" />
-		</svg>
+		<div class="grid-bg"></div>
 
-		<!-- Canvas content (transformed) -->
 		<div 
-			class="canvas"
+			class="canvas-transform"
 			style="transform: translate({transform.x}px, {transform.y}px) scale({transform.scale})"
 		>
-			<!-- Edges (SVG layer) -->
-			<svg class="edges-layer" width="4000" height="3000">
-				{#each edges as edge}
-					<path 
-						class="edge"
-						d={getEdgePath(edge)}
-					/>
-				{/each}
-			</svg>
-
 			<!-- Nodes -->
-			{#each nodes as node}
-				{@const nodeHeight = getNodeHeight(node)}
+			{#each nodes as node (node.id)}
+				{@const status = getStatusStyles(node.status)}
 				<div 
 					class="node"
-					style="left: {node.x}px; top: {node.y}px; width: {NODE_WIDTH}px; min-height: {nodeHeight}px;"
+					style="left: {node.x}px; top: {node.y}px; width: {NODE_WIDTH}px;"
 				>
-					<!-- Header -->
 					<div class="node-header">
-						<span class="type-badge {getTypeBadgeClass(node.type)}">{node.type}</span>
-						<span class="node-title">{node.name}</span>
+						<span class="type-badge" style={getBadgeStyle(node.type)}>{node.type}</span>
+						<span class="node-name">{node.name}</span>
 						{#if !node.is_input_node}
 							<button 
-								class="play-btn" 
-								class:play-btn-primary={node.is_output_node}
-								onclick={() => handleRunToNode(node.name)}
+								class="run-btn"
+								class:run-btn-primary={node.is_output_node}
+								onclick={(e) => handleRunToNode(e, node.name)}
+								title="Run to here"
 							>
-								<svg viewBox="0 0 24 24" fill="currentColor">
-									<polygon points="6,4 20,12 6,20"/>
-								</svg>
+								<svg viewBox="0 0 24 24"><polygon points="8,5 19,12 8,19"/></svg>
 							</button>
 						{/if}
 					</div>
 
-					<!-- Ports -->
 					<div class="node-body">
-						<div class="ports-container">
-							<!-- Input ports -->
-							<div class="input-ports">
-								{#each node.inputs as port, i}
-									<div class="port input-port">
-										<span class="port-dot"></span>
-										<span class="port-label">{port.name}</span>
-									</div>
-								{/each}
-							</div>
-
-							<!-- Output ports -->
-							<div class="output-ports">
-								{#each node.outputs as port, i}
-									<div class="port output-port">
-										<span class="port-label">{port}</span>
-										<span class="port-dot"></span>
-									</div>
-								{/each}
-							</div>
+						<div class="ports-left">
+							{#each node.inputs as port (port.name)}
+								<div class="port-row">
+									<span class="port-dot input"></span>
+									<span class="port-label">{port.name}</span>
+								</div>
+							{/each}
+						</div>
+						<div class="ports-right">
+							{#each node.outputs as portName (portName)}
+								<div class="port-row">
+									<span class="port-label">{portName}</span>
+									<span class="port-dot output"></span>
+								</div>
+							{/each}
 						</div>
 					</div>
 
-					<!-- Status -->
-					<div class="node-status {getStatusClass(node.status)}">
-						<span class="status-dot"></span>
-						<span class="status-text">{node.status.toUpperCase()}</span>
+					<div class="node-footer">
+						<span class="status-dot" style="background: {status.dot}; box-shadow: {status.glow};"></span>
+						<span class="status-label" style="color: {status.text};">{node.status}</span>
 					</div>
 				</div>
 			{/each}
+
+			<!-- Edges SVG -->
+			<svg class="edges-svg">
+				{#each edgePaths as edge (edge.id)}
+					<path d={edge.d} class="edge-path" />
+				{/each}
+			</svg>
+		</div>
+
+		<!-- Zoom Controls -->
+		<div class="zoom-controls">
+			<button class="zoom-btn" onclick={zoomOut} title="Zoom out">−</button>
+			<span class="zoom-level">{zoomPercent}%</span>
+			<button class="zoom-btn" onclick={zoomIn} title="Zoom in">+</button>
+			<button class="zoom-btn fit-btn" onclick={zoomToFit} title="Fit all nodes">⊡</button>
 		</div>
 	</div>
 </Block>
 
 <style>
-	@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-
-	.canvas-container {
+	.canvas {
 		position: relative;
 		width: 100%;
 		height: 100%;
 		overflow: hidden;
-		background: linear-gradient(165deg, #0a0a0a 0%, #111 50%, #0a0a0a 100%);
+		background: #0c0c0c;
 		cursor: grab;
-		font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 	}
 
-	.canvas-container:active {
+	.canvas:active {
 		cursor: grabbing;
 	}
 
-	.grid-background {
+	.grid-bg {
 		position: absolute;
-		top: 0;
-		left: 0;
-		width: 100%;
-		height: 100%;
+		inset: 0;
+		background-image: radial-gradient(circle, rgba(249, 115, 22, 0.06) 1px, transparent 1px);
+		background-size: 20px 20px;
 		pointer-events: none;
-		z-index: 0;
 	}
 
-	.canvas {
+	.canvas-transform {
 		position: absolute;
 		top: 0;
 		left: 0;
 		transform-origin: 0 0;
-		z-index: 1;
 	}
 
-	/* Edges */
-	.edges-layer {
+	/* Zoom controls */
+	.zoom-controls {
+		position: absolute;
+		bottom: 16px;
+		left: 16px;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		background: rgba(20, 20, 20, 0.9);
+		border: 1px solid rgba(249, 115, 22, 0.2);
+		border-radius: 8px;
+		padding: 4px;
+		z-index: 100;
+	}
+
+	.zoom-btn {
+		width: 28px;
+		height: 28px;
+		border: none;
+		background: transparent;
+		color: #999;
+		font-size: 16px;
+		font-weight: 600;
+		cursor: pointer;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.15s;
+	}
+
+	.zoom-btn:hover {
+		background: rgba(249, 115, 22, 0.15);
+		color: #f97316;
+	}
+
+	.fit-btn {
+		font-size: 14px;
+		margin-left: 4px;
+		border-left: 1px solid rgba(249, 115, 22, 0.15);
+		padding-left: 8px;
+		border-radius: 0 4px 4px 0;
+	}
+
+	.zoom-level {
+		font-size: 11px;
+		font-weight: 600;
+		color: #888;
+		min-width: 40px;
+		text-align: center;
+		font-family: 'SF Mono', Monaco, monospace;
+	}
+
+	/* SVG for edges */
+	.edges-svg {
 		position: absolute;
 		top: 0;
 		left: 0;
+		width: 4000px;
+		height: 3000px;
 		pointer-events: none;
-		z-index: 1;
+		overflow: visible;
+		transform: translateY(-8px);
 	}
 
-	.edge {
+	.edge-path {
 		fill: none;
 		stroke: #f97316;
 		stroke-width: 2.5;
 		stroke-linecap: round;
-		filter: drop-shadow(0 0 6px rgba(249, 115, 22, 0.4));
 	}
 
-	/* Nodes */
+	/* Node */
 	.node {
 		position: absolute;
-		background: linear-gradient(165deg, rgba(20, 20, 20, 0.95) 0%, rgba(12, 12, 12, 0.98) 100%);
+		background: linear-gradient(175deg, #181818 0%, #121212 100%);
 		border: 1px solid rgba(249, 115, 22, 0.2);
-		border-radius: 12px;
-		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
-		z-index: 10;
+		border-radius: 10px;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 		overflow: hidden;
 	}
 
 	.node-header {
-		padding: 12px 14px;
-		background: linear-gradient(135deg, rgba(249, 115, 22, 0.12) 0%, rgba(234, 88, 12, 0.06) 100%);
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
+		padding: 0 12px;
+		height: 36px;
+		background: rgba(249, 115, 22, 0.06);
 		border-bottom: 1px solid rgba(249, 115, 22, 0.1);
 	}
 
 	.type-badge {
-		font-size: 9px;
+		font-size: 8px;
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.8px;
-		padding: 4px 8px;
-		border-radius: 6px;
-		font-family: 'JetBrains Mono', monospace;
-	}
-
-	.badge-fn {
-		background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+		letter-spacing: 0.5px;
+		padding: 3px 8px;
+		border-radius: 4px;
 		color: #fff;
+		flex-shrink: 0;
 	}
 
-	.badge-input {
-		background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
-		color: #fff;
-	}
-
-	.badge-map {
-		background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-		color: #fff;
-	}
-
-	.badge-gradio {
-		background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-		color: #fff;
-	}
-
-	.badge-model {
-		background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-		color: #fff;
-	}
-
-	.badge-default {
-		background: rgba(100, 100, 100, 0.5);
-		color: #fff;
-	}
-
-	.node-title {
+	.node-name {
 		flex: 1;
-		font-size: 13px;
+		font-size: 11px;
 		font-weight: 600;
-		color: #fff;
+		color: #eee;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.play-btn {
-		width: 26px;
-		height: 26px;
+	.run-btn {
+		width: 20px;
+		height: 20px;
 		border-radius: 50%;
-		border: 2px solid #f97316;
-		background: rgba(249, 115, 22, 0.1);
-		color: #f97316;
+		border: 1.5px solid #f97316;
+		background: transparent;
 		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		padding: 0;
-		transition: all 0.15s ease;
+		flex-shrink: 0;
 	}
 
-	.play-btn svg {
-		width: 10px;
-		height: 10px;
-		margin-left: 2px;
+	.run-btn svg {
+		width: 8px;
+		height: 8px;
 		fill: #f97316;
 	}
 
-	.play-btn-primary {
+	.run-btn-primary {
 		background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
 		border: none;
 		box-shadow: 0 2px 8px rgba(249, 115, 22, 0.4);
 	}
 
-	.play-btn-primary svg {
+	.run-btn-primary svg {
 		fill: #fff;
 	}
 
-	/* Node body & ports */
 	.node-body {
-		padding: 12px 0;
-	}
-
-	.ports-container {
 		display: flex;
 		justify-content: space-between;
+		padding-top: 8px;
+		padding-bottom: 8px;
+		min-height: 30px;
 	}
 
-	.input-ports, .output-ports {
+	.ports-left, .ports-right {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
 	}
 
-	.output-ports {
+	.ports-right {
 		align-items: flex-end;
 	}
 
-	.port {
+	.port-row {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		padding: 2px 14px;
+		gap: 6px;
+		height: 22px;
+		padding: 0 10px;
 	}
 
 	.port-dot {
-		width: 10px;
-		height: 10px;
+		width: 8px;
+		height: 8px;
 		border-radius: 50%;
 		flex-shrink: 0;
 	}
 
-	.input-port .port-dot {
+	.port-dot.input {
 		background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-		box-shadow: 0 0 8px rgba(249, 115, 22, 0.5);
+		box-shadow: 0 0 6px rgba(249, 115, 22, 0.5);
 	}
 
-	.output-port .port-dot {
+	.port-dot.output {
 		background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
-		box-shadow: 0 0 8px rgba(251, 146, 60, 0.5);
+		box-shadow: 0 0 6px rgba(251, 146, 60, 0.5);
 	}
 
 	.port-label {
-		font-family: 'JetBrains Mono', monospace;
-		font-size: 11px;
+		font-size: 10px;
 		font-weight: 500;
-		color: #d4d4d4;
+		color: #888;
+		font-family: 'SF Mono', Monaco, monospace;
 	}
 
-	/* Status */
-	.node-status {
-		padding: 10px 14px;
-		border-top: 1px solid rgba(249, 115, 22, 0.1);
+	.node-footer {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		font-size: 9px;
-		text-transform: uppercase;
-		letter-spacing: 1px;
-		font-weight: 600;
-		font-family: 'JetBrains Mono', monospace;
+		gap: 6px;
+		height: 26px;
+		padding: 0 10px;
+		border-top: 1px solid rgba(249, 115, 22, 0.08);
 	}
 
 	.status-dot {
-		width: 8px;
-		height: 8px;
+		width: 6px;
+		height: 6px;
 		border-radius: 50%;
 	}
 
-	.status-pending .status-dot {
-		background: rgba(120, 120, 120, 0.5);
-	}
-	.status-pending .status-text {
-		color: rgba(160, 160, 160, 0.8);
-	}
-
-	.status-running .status-dot {
-		background: #f97316;
-		box-shadow: 0 0 10px rgba(249, 115, 22, 0.6);
-		animation: pulse 1s ease-in-out infinite;
-	}
-	.status-running .status-text {
-		color: #fb923c;
-	}
-
-	.status-completed .status-dot {
-		background: #22c55e;
-		box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
-	}
-	.status-completed .status-text {
-		color: #4ade80;
-	}
-
-	.status-error .status-dot {
-		background: #ef4444;
-		box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
-	}
-	.status-error .status-text {
-		color: #f87171;
-	}
-
-	@keyframes pulse {
-		0%, 100% { opacity: 1; transform: scale(1); }
-		50% { opacity: 0.6; transform: scale(1.3); }
+	.status-label {
+		font-size: 8px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
 	}
 </style>

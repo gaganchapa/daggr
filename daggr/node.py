@@ -207,28 +207,3 @@ class InputNode(Node):
         return f"input_{index}"
 
 
-class MapNode(Node):
-    _instance_counter = 0
-
-    def __init__(
-        self,
-        fn: Callable,
-        item_output: Any,
-        name: Optional[str] = None,
-    ):
-        super().__init__(name)
-        MapNode._instance_counter += 1
-        self._fn = fn
-        self._item_output = item_output
-        self._discover_signature()
-        if not self._name:
-            self._name = f"map_{MapNode._instance_counter}"
-        self._validate_ports()
-
-    def _discover_signature(self):
-        sig = inspect.signature(self._fn)
-        params = list(sig.parameters.keys())
-        self._item_param = params[0] if params else "item"
-        self._context_params = params[1:] if len(params) > 1 else []
-        self._input_ports = ["items"] + self._context_params
-        self._output_ports = ["results"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 if TYPE_CHECKING:
     from daggr.node import Node
@@ -19,6 +19,50 @@ class Port:
 
     def _as_target(self) -> tuple[Node, str]:
         return (self.node, self.name)
+
+
+class ScatteredPort:
+    def __init__(self, port: Port, item_output: Optional[Any] = None):
+        self.port = port
+        self.item_output = item_output
+
+    @property
+    def node(self):
+        return self.port.node
+
+    @property
+    def name(self):
+        return self.port.name
+
+    def __repr__(self):
+        return f"ScatteredPort({self.port})"
+
+
+class GatheredPort:
+    def __init__(self, port: Port):
+        self.port = port
+
+    @property
+    def node(self):
+        return self.port.node
+
+    @property
+    def name(self):
+        return self.port.name
+
+    def __repr__(self):
+        return f"GatheredPort({self.port})"
+
+
+def scatter(port: Port, item_output: Optional[Any] = None) -> ScatteredPort:
+    return ScatteredPort(port, item_output)
+
+
+def gather(port: Port) -> GatheredPort:
+    return GatheredPort(port)
+
+
+PortLike = Union[Port, ScatteredPort, GatheredPort]
 
 
 class PortNamespace:

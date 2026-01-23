@@ -1110,7 +1110,14 @@ class UIGenerator:
         self.state = SessionState()
         self.session_id: Optional[str] = None
 
-    def _get_node_type(self, node) -> str:
+    def _get_node_type(self, node, node_name: str) -> str:
+        if self._has_scattered_input(node_name):
+            base_type = self._get_base_node_type(node)
+            return f"MAP:{base_type}"
+
+        return self._get_base_node_type(node)
+
+    def _get_base_node_type(self, node) -> str:
         type_map = {
             "FnNode": "FN",
             "TextInput": "INPUT",
@@ -1121,10 +1128,21 @@ class UIGenerator:
             "InferenceNode": "MODEL",
             "InteractionNode": "ACTION",
             "InputNode": "INPUT",
-            "MapNode": "MAP",
         }
         class_name = node.__class__.__name__
         return type_map.get(class_name, class_name.upper())
+
+    def _has_scattered_input(self, node_name: str) -> bool:
+        for edge in self.graph._edges:
+            if edge.target_node._name == node_name and edge.is_scattered:
+                return True
+        return False
+
+    def _get_scattered_edge(self, node_name: str):
+        for edge in self.graph._edges:
+            if edge.target_node._name == node_name and edge.is_scattered:
+                return edge
+        return None
 
     def _is_entry_or_interaction(self, node_name: str) -> bool:
         from daggr.node import InputNode, InteractionNode
@@ -1215,36 +1233,43 @@ class UIGenerator:
             )
         return components
 
-    def _build_map_items(self, node, result: Any = None) -> List[Dict[str, Any]]:
-        from daggr.node import MapNode
-
-        if not isinstance(node, MapNode):
+    def _build_scattered_items(self, node_name: str, result: Any = None) -> List[Dict[str, Any]]:
+        scattered_edge = self._get_scattered_edge(node_name)
+        if not scattered_edge:
             return []
 
         item_output_type = "text"
-        if hasattr(node, "_item_output"):
-            item_output_type = self._get_component_type(node._item_output)
+        if scattered_edge.item_output:
+            item_output_type = self._get_component_type(scattered_edge.item_output)
 
         items = []
-        if result and isinstance(result, dict) and "results" in result:
-            results = result["results"]
+        if result and isinstance(result, dict) and "_scattered_results" in result:
+            results = result["_scattered_results"]
+            source_items = result.get("_items", [])
             for i, item_result in enumerate(results):
+                source_item = source_items[i] if i < len(source_items) else None
                 preview = ""
                 output = None
+
+                if isinstance(source_item, dict):
+                    preview_parts = []
+                    for k, v in list(source_item.items())[:2]:
+                        preview_parts.append(f"{k}: {str(v)[:20]}")
+                    preview = ", ".join(preview_parts)
+                elif source_item:
+                    preview = str(source_item)[:50]
 
                 if isinstance(item_result, dict):
                     first_key = list(item_result.keys())[0] if item_result else None
                     if first_key:
                         output = str(item_result[first_key])
-                        preview = output[:50] + "..." if len(output) > 50 else output
                 else:
-                    output = str(item_result)
-                    preview = output[:50] + "..." if len(output) > 50 else output
+                    output = str(item_result) if item_result else None
 
                 items.append(
                     {
                         "index": i + 1,
-                        "preview": preview,
+                        "preview": preview or f"Item {i + 1}",
                         "output": output,
                         "is_audio_output": item_output_type == "audio",
                     }
@@ -1285,7 +1310,7 @@ class UIGenerator:
         input_values: Dict[str, Any] | None = None,
         history: Dict[str, Dict[str, List[Dict]]] | None = None,
     ) -> dict:
-        from daggr.node import InputNode, MapNode
+        from daggr.node import InputNode
 
         node_results = node_results or {}
         node_statuses = node_statuses or {}
@@ -1325,9 +1350,11 @@ class UIGenerator:
 
             result = node_results.get(node_name)
             result_str = ""
-            if result is not None and not hasattr(node, "_output_components"):
+            is_scattered = self._has_scattered_input(node_name)
+            if result is not None and not hasattr(node, "_output_components") and not is_scattered:
                 if isinstance(result, dict):
-                    result_str = json.dumps(result, indent=2, default=str)[:300]
+                    display_result = {k: v for k, v in result.items() if not k.startswith("_")}
+                    result_str = json.dumps(display_result, indent=2, default=str)[:300]
                 elif isinstance(result, (list, tuple)):
                     result_str = json.dumps(list(result)[:5], default=str)
                 else:
@@ -1352,12 +1379,12 @@ class UIGenerator:
                         comp["value"] = input_values[node_name][comp["label"]]
 
             output_components = self._build_output_components(node, result)
-            is_map_node = isinstance(node, MapNode)
-            map_items = self._build_map_items(node, result) if is_map_node else []
+            scattered_items = self._build_scattered_items(node_name, result) if is_scattered else []
 
             item_output_type = "text"
-            if is_map_node and hasattr(node, "_item_output"):
-                item_output_type = self._get_component_type(node._item_output)
+            scattered_edge = self._get_scattered_edge(node_name)
+            if scattered_edge and scattered_edge.item_output:
+                item_output_type = self._get_component_type(scattered_edge.item_output)
 
             is_output = self._is_output_node(node_name)
             is_input = isinstance(node, InputNode)
@@ -1366,7 +1393,7 @@ class UIGenerator:
                 {
                     "id": node_id,
                     "name": node_name,
-                    "type": self._get_node_type(node),
+                    "type": self._get_node_type(node, node_name),
                     "inputs": input_ports_data,
                     "outputs": node._output_ports or [],
                     "x": x,
@@ -1375,9 +1402,9 @@ class UIGenerator:
                     "input_value": input_values.get(node_name, ""),
                     "input_components": input_components,
                     "output_components": output_components,
-                    "is_map_node": is_map_node,
-                    "map_items": map_items,
-                    "map_item_count": len(map_items),
+                    "is_map_node": is_scattered,
+                    "map_items": scattered_items,
+                    "map_item_count": len(scattered_items),
                     "item_output_type": item_output_type,
                     "status": node_statuses.get(node_name, "pending"),
                     "result": result_str,

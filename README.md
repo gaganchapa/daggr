@@ -105,7 +105,7 @@ graph.launch()
 
 ```python
 import gradio as gr
-from daggr import FnNode, Graph, InputNode, MapNode
+from daggr import FnNode, Graph, InputNode, scatter, gather
 
 
 def mock_maya1_voice_gen(text_description: str) -> dict:
@@ -166,9 +166,9 @@ dialogue_gen = FnNode(
     name="Generate Dialogue",
 )
 
-tts_map = MapNode(
+tts = FnNode(
     fn=mock_tts,
-    item_output=gr.Audio(),
+    outputs=[gr.Audio(label="audio")],
     name="TTS Per Segment",
 )
 
@@ -191,11 +191,11 @@ graph \
     .edge(host_voice_input.host_voice, host_voice_gen.text_description) \
     .edge(guest_voice_input.guest_voice, guest_voice_gen.text_description) \
     .edge(topic_input.topic, dialogue_gen.topic) \
-    .edge(dialogue_gen.dialogue, tts_map.items) \
-    .edge(host_voice_gen.voice, tts_map.host_voice) \
-    .edge(guest_voice_gen.voice, tts_map.guest_voice) \
-    .edge(tts_map.results, combine_test.segments) \
-    .edge(tts_map.results, combine_full.segments)
+    .edge(scatter(dialogue_gen.dialogue, item_output=gr.Audio()), tts.segment) \
+    .edge(host_voice_gen.voice, tts.host_voice) \
+    .edge(guest_voice_gen.voice, tts.guest_voice) \
+    .edge(gather(tts.audio), combine_test.segments) \
+    .edge(gather(tts.audio), combine_full.segments)
 
 
 graph.launch()
