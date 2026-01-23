@@ -50,7 +50,22 @@ def generate_dialogue(topic: str, host_voice: str, guest_voice: str) -> list[dic
         ],
     )
 
-    print(completion.choices[0].message)      
+    completion_with_urls = []
+    for message in completion.choices[0].message.content:
+        if message["speaker"] == "host":
+            completion_with_urls.append({
+                "speaker": "host",
+                "text": message["text"],
+                "url": host_voice.audio.url
+            })
+        else:
+            completion_with_urls.append({
+                "speaker": "guest",
+                "text": message["text"],
+                "url": guest_voice.audio.url
+            })
+
+    return completion_with_urls, completion.choices[0].message.content, 
 
 dialogue = FnNode(
     fn=generate_dialogue,
