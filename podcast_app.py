@@ -39,47 +39,12 @@ guest_voice = GradioNode(
 
 
 def generate_dialogue(topic: str, host_voice: str, guest_voice: str) -> list[dict]:
-    import os
-
-    from huggingface_hub import InferenceClient
-
-    client = InferenceClient(
-        api_key=os.environ["HF_TOKEN"],
-    )
-
-    completion = client.chat.completions.create(
-        model="moonshotai/Kimi-K2-Instruct-0905:groq",
-        messages=[
-            {
-                "role": "user",
-                "content": "Generate a dialogue script for a podcast episode about the topic: {topic}. It should be a conversation between a host and a guest. Return the script as a JSON list with the following structure: [{'speaker': 'host', 'text': '...'}, {'speaker': 'guest', 'text': '...'}, ...]",
-            }
-        ],
-    )
-
-    completion_with_urls = []
-    for message in completion.choices[0].message.content:
-        if message["speaker"] == "host":
-            completion_with_urls.append(
-                {
-                    "speaker": "host",
-                    "text": message["text"],
-                    "url": host_voice.audio.url,
-                }
-            )
-        else:
-            completion_with_urls.append(
-                {
-                    "speaker": "guest",
-                    "text": message["text"],
-                    "url": guest_voice.audio.url,
-                }
-            )
-
-    return (
-        completion_with_urls,
-        completion.choices[0].message.content,
-    )
+    json = {
+        "topic": topic,
+        "host_voice": host_voice,
+        "guest_voice": guest_voice,
+    }
+    return json, json
 
 
 dialogue = FnNode(
