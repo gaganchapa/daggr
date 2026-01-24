@@ -1,16 +1,4 @@
-__version__ = "0.1.0"
+import json
+from pathlib import Path
 
-from daggr.graph import Graph
-from daggr.node import FnNode, GradioNode, InferenceNode
-from daggr.port import GatheredPort, ScatteredPort, gather, scatter
-
-__all__ = [
-    "Graph",
-    "GradioNode",
-    "InferenceNode",
-    "FnNode",
-    "scatter",
-    "gather",
-    "ScatteredPort",
-    "GatheredPort",
-]
+__version__ = json.loads((Path(__file__).parent / "package.json").read_text())["version"]
