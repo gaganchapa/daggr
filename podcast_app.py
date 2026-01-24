@@ -78,8 +78,8 @@ def chatterbox(text: str, speaker: str, host_audio: str, guest_audio: str) -> st
 samples = FnNode(
     fn=chatterbox,
     inputs={
-        "text": dialogue.items.each["text"],
-        "speaker": dialogue.items.each["speaker"],
+        "text": dialogue.items.text,
+        "speaker": dialogue.items.speaker,
         "host_audio": host_voice.audio,
         "guest_audio": guest_voice.audio,
     },

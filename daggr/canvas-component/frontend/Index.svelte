@@ -1,6 +1,14 @@
+<script context="module" lang="ts">
+	// Truly module-level Set - persists across all component instances/re-renders
+	const globalProcessedSet = new Set<string>();
+</script>
+
 <script lang="ts">
-	import { onMount } from 'svelte';
-	
+	import { Block } from "@gradio/atoms";
+	import { StatusTracker } from "@gradio/statustracker";
+	import { Gradio } from "@gradio/utils";
+
+	// Types
 	interface Port {
 		name: string;
 		history_count?: number;
@@ -62,38 +70,70 @@
 		nodes: GraphNode[];
 		edges: GraphEdge[];
 		inputs?: Record<string, Record<string, string>>;
-		session_id?: string;
-		run_id?: string;
-		completed_node?: string;
+		run_to_node?: string;
 	}
 
+	interface CanvasEvents {
+		change: CanvasData;
+	}
+
+	interface CanvasProps {
+		value: CanvasData;
+		height: number | string | undefined;
+	}
+
+	let props = $props();
+	const gradio = new Gradio<CanvasEvents, CanvasProps>(props);
+
+	// Canvas element ref
 	let canvasEl: HTMLDivElement;
+
+	// Canvas pan/zoom state
 	let transform = $state({ x: 0, y: 0, scale: 1 });
 	let isPanning = $state(false);
 	let startPan = $state({ x: 0, y: 0 });
 
-	let graphData = $state<CanvasData | null>(null);
-	let sessionId = $state<string | null>(null);
-	let ws: WebSocket | null = null;
-	let wsConnected = $state(false);
-	let reconnectAttempts = 0;
-	let maxReconnectAttempts = 10;
-	let isConnecting = false;
-	let reconnectTimer: number | null = null;
+	// Data from props - keep previous values if new data is empty (prevents UI clearing)
+	let lastValidNodes: GraphNode[] = [];
+	let lastValidEdges: GraphEdge[] = [];
+	
+	let nodes = $derived.by(() => {
+		const newNodes = gradio.props.value?.nodes;
+		if (newNodes && newNodes.length > 0) {
+			lastValidNodes = newNodes;
+			return newNodes;
+		}
+		return lastValidNodes;
+	});
+	
+	let edges = $derived.by(() => {
+		const newEdges = gradio.props.value?.edges;
+		if (newEdges && newEdges.length > 0) {
+			lastValidEdges = newEdges;
+			return newEdges;
+		}
+		return lastValidEdges;
+	});
 
+	// Track input component values (keyed by node.id for correct data flow)
 	let inputValues = $state<Record<string, Record<string, any>>>({});
+
+	// Track pending run IDs per node (queue of run IDs waiting for results)
 	let pendingRunIds = $state<Record<string, string[]>>({});
+
+	// Track which nodes are being executed for each run_id
 	let runIdToNodes = $state<Record<string, string[]>>({});
+
+	// Track multiple results per node (array of results)
 	let nodeResults = $state<Record<string, any[]>>({});
+
+	// Track which result index is selected per node
 	let selectedResultIndex = $state<Record<string, number>>({});
+
+	// Track which map nodes are expanded (showing all items)
 	let expandedMapNodes = $state<Record<string, boolean>>({});
-	let itemListValues = $state<Record<string, Record<number, Record<string, any>>>>({});
 
-	const globalProcessedSet = new Set<string>();
-
-	let nodes = $derived(graphData?.nodes || []);
-	let edges = $derived(graphData?.edges || []);
-
+	// Computed running counts from pending runs
 	let runningCounts = $derived.by(() => {
 		const counts: Record<string, number> = {};
 		for (const [nodeName, ids] of Object.entries(pendingRunIds)) {
@@ -102,145 +142,7 @@
 		return counts;
 	});
 
-	function generateSessionId(): string {
-		return 'session_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-	}
-
-	function connectWebSocket() {
-		if (isConnecting) return;
-		if (reconnectAttempts >= maxReconnectAttempts) {
-			console.error('[daggr] Max reconnection attempts reached');
-			return;
-		}
-		
-		isConnecting = true;
-		
-		if (!sessionId) {
-			sessionId = generateSessionId();
-		}
-		
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const wsUrl = `${protocol}//${window.location.host}/ws/${sessionId}`;
-		
-		console.log('[daggr] Connecting to', wsUrl);
-		
-		try {
-			ws = new WebSocket(wsUrl);
-		} catch (e) {
-			console.error('[daggr] Failed to create WebSocket:', e);
-			isConnecting = false;
-			scheduleReconnect();
-			return;
-		}
-		
-		ws.onopen = () => {
-			console.log('[daggr] WebSocket connected');
-			isConnecting = false;
-			wsConnected = true;
-			reconnectAttempts = 0;
-			ws?.send(JSON.stringify({ action: 'get_graph' }));
-		};
-		
-		ws.onmessage = (event) => {
-			const data = JSON.parse(event.data);
-			handleMessage(data);
-		};
-		
-		ws.onclose = () => {
-			isConnecting = false;
-			wsConnected = false;
-			scheduleReconnect();
-		};
-		
-		ws.onerror = (e) => {
-			console.error('[daggr] WebSocket error');
-			isConnecting = false;
-		};
-	}
-	
-	function scheduleReconnect() {
-		if (reconnectTimer) return;
-		reconnectAttempts++;
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-		console.log(`[daggr] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
-		reconnectTimer = window.setTimeout(() => {
-			reconnectTimer = null;
-			connectWebSocket();
-		}, delay);
-	}
-
-	function handleMessage(data: any) {
-		console.log('[daggr] received:', data.type, data);
-		if (data.type === 'graph') {
-			graphData = data.data;
-		} else if (data.type === 'error' && data.error) {
-			console.error('[daggr] server error:', data.error);
-		} else if (data.type === 'node_complete' || data.type === 'error') {
-			const runId = data.run_id;
-			const completedNode = data.completed_node;
-			
-			if (runId && completedNode) {
-				const completionKey = `${runId}:${completedNode}`;
-				
-				if (!globalProcessedSet.has(completionKey)) {
-					globalProcessedSet.add(completionKey);
-					
-					if (pendingRunIds[completedNode]) {
-						pendingRunIds[completedNode] = pendingRunIds[completedNode].filter(id => id !== runId);
-					}
-					
-					const executedNodes = runIdToNodes[runId];
-					if (executedNodes) {
-						const allDone = executedNodes.every(n => globalProcessedSet.has(`${runId}:${n}`));
-						if (allDone) {
-							delete runIdToNodes[runId];
-							setTimeout(() => {
-								for (const n of executedNodes) {
-									globalProcessedSet.delete(`${runId}:${n}`);
-								}
-							}, 1000);
-						}
-					}
-				}
-			}
-			
-			if (data.nodes) {
-				graphData = { ...graphData!, nodes: data.nodes, edges: data.edges || graphData!.edges };
-				
-				if (completedNode) {
-					const node = data.nodes?.find((n: GraphNode) => n.name === completedNode);
-					if (node && node.output_components?.length > 0) {
-						const hasResult = node.output_components.some((c: GradioComponentData) => c.value != null);
-						if (hasResult) {
-							if (!nodeResults[completedNode]) {
-								nodeResults[completedNode] = [];
-							}
-							const resultSnapshot = node.output_components.map((c: GradioComponentData) => ({ ...c }));
-							nodeResults[completedNode] = [...nodeResults[completedNode], resultSnapshot];
-							selectedResultIndex[completedNode] = nodeResults[completedNode].length - 1;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	onMount(() => {
-		connectWebSocket();
-		return () => {
-			if (reconnectTimer) {
-				clearTimeout(reconnectTimer);
-				reconnectTimer = null;
-			}
-			if (ws) {
-				ws.onclose = null;
-				ws.onerror = null;
-				ws.close();
-				ws = null;
-			}
-		};
-	});
-
+	// Get ancestors of a node from the edges
 	function getAncestors(nodeName: string): string[] {
 		const ancestors = new Set<string>();
 		const toVisit = [nodeName];
@@ -293,16 +195,20 @@
 		if (node.is_input_node && node.input_components?.length) {
 			return node.input_components;
 		}
+		// For output nodes, use selected results if available
 		return getSelectedResults(node);
 	}
 
+	// Node layout constants - MUST match CSS exactly
 	const NODE_WIDTH = 220;
+	const NODE_HEIGHT_BASE = 100;
 	const HEADER_HEIGHT = 36;
 	const HEADER_BORDER = 1;
 	const BODY_PADDING_TOP = 8;
 	const PORT_ROW_HEIGHT = 22;
 	const EMBEDDED_COMPONENT_HEIGHT = 60;
 
+	// Calculate node height
 	function getNodeHeight(node: GraphNode): number {
 		const portRows = Math.max(node.inputs.length, node.outputs.length, 1);
 		const componentsToRender = getComponentsToRender(node);
@@ -310,6 +216,7 @@
 		return HEADER_HEIGHT + HEADER_BORDER + BODY_PADDING_TOP + (portRows * PORT_ROW_HEIGHT) + embeddedHeight + BODY_PADDING_TOP;
 	}
 
+	// Build lookup map
 	let nodeMap = $derived.by(() => {
 		const map = new Map<string, GraphNode>();
 		for (const node of nodes) {
@@ -318,10 +225,12 @@
 		return map;
 	});
 
+	// Calculate Y position for a port (relative to node top)
 	function getPortY(portIndex: number): number {
 		return HEADER_HEIGHT + HEADER_BORDER + BODY_PADDING_TOP + (portIndex * PORT_ROW_HEIGHT) + (PORT_ROW_HEIGHT / 2);
 	}
 
+	// Compute all edge paths reactively
 	let edgePaths = $derived.by(() => {
 		const paths: { 
 			id: string; 
@@ -359,9 +268,12 @@
 			let forkPaths: string[] = [];
 
 			if (is_scattered) {
+				// Fork at the END - edge splits into 3 lines near target
 				const forkStart = x2 - 30;
 				const forkSpread = 8;
+				// Main path stops before the fork
 				const d = `M ${x1} ${y1} C ${x1 + cp} ${y1}, ${forkStart - 20} ${y2}, ${forkStart} ${y2}`;
+				// Fork lines spread out to target
 				forkPaths = [
 					`M ${forkStart} ${y2} L ${x2} ${y2 - forkSpread}`,
 					`M ${forkStart} ${y2} L ${x2} ${y2}`,
@@ -369,13 +281,16 @@
 				];
 				paths.push({ id: edge.id, d, is_scattered, is_gathered, forkPaths });
 			} else if (is_gathered) {
+				// Fork at the START - 3 lines converge from source
 				const forkEnd = x1 + 30;
 				const forkSpread = 8;
+				// Fork lines from source
 				forkPaths = [
 					`M ${x1} ${y1 - forkSpread} L ${forkEnd} ${y1}`,
 					`M ${x1} ${y1} L ${forkEnd} ${y1}`,
 					`M ${x1} ${y1 + forkSpread} L ${forkEnd} ${y1}`,
 				];
+				// Main path continues from fork point
 				const d = `M ${forkEnd} ${y1} C ${forkEnd + cp - 30} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`;
 				paths.push({ id: edge.id, d, is_scattered, is_gathered, forkPaths });
 			} else {
@@ -387,6 +302,7 @@
 		return paths;
 	});
 
+	// Zoom to fit all nodes
 	function zoomToFit() {
 		if (nodes.length === 0 || !canvasEl) return;
 
@@ -395,6 +311,7 @@
 		const canvasWidth = canvasRect.width;
 		const canvasHeight = canvasRect.height;
 
+		// Calculate bounding box of all nodes
 		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 		for (const node of nodes) {
 			const nodeHeight = getNodeHeight(node);
@@ -407,10 +324,12 @@
 		const contentWidth = maxX - minX;
 		const contentHeight = maxY - minY;
 
+		// Calculate scale to fit
 		const scaleX = (canvasWidth - padding * 2) / contentWidth;
 		const scaleY = (canvasHeight - padding * 2) / contentHeight;
-		const newScale = Math.min(scaleX, scaleY, 1.5);
+		const newScale = Math.min(scaleX, scaleY, 1.5); // Cap at 150%
 
+		// Calculate translation to center
 		const centerX = (minX + maxX) / 2;
 		const centerY = (minY + maxY) / 2;
 		const newX = canvasWidth / 2 - centerX * newScale;
@@ -419,6 +338,7 @@
 		transform = { x: newX, y: newY, scale: Math.max(0.2, newScale) };
 	}
 
+	// Zoom controls
 	function zoomIn() {
 		transform.scale = Math.min(3, transform.scale * 1.2);
 	}
@@ -427,6 +347,7 @@
 		transform.scale = Math.max(0.2, transform.scale / 1.2);
 	}
 
+	// Pan handlers
 	function handleMouseDown(e: MouseEvent) {
 		if (e.button === 0 && e.target === canvasEl) {
 			isPanning = true;
@@ -446,46 +367,23 @@
 	}
 
 	function handleWheel(e: WheelEvent) {
-		const target = e.target as HTMLElement;
-		const scrollableParent = target.closest('.item-list-items, .map-items-list, .embedded-components');
-		
-		if (scrollableParent && !e.ctrlKey && !e.metaKey) {
-			const el = scrollableParent as HTMLElement;
-			const canScrollUp = el.scrollTop > 0;
-			const canScrollDown = el.scrollTop < el.scrollHeight - el.clientHeight;
-			const scrollingDown = e.deltaY > 0;
-			const scrollingUp = e.deltaY < 0;
-			
-			if ((scrollingDown && canScrollDown) || (scrollingUp && canScrollUp)) {
-				return;
-			}
-		}
-		
 		e.preventDefault();
 		
-		if (e.ctrlKey || e.metaKey) {
-			const rect = canvasEl.getBoundingClientRect();
-			const mouseX = e.clientX - rect.left;
-			const mouseY = e.clientY - rect.top;
-			
-			const canvasX = (mouseX - transform.x) / transform.scale;
-			const canvasY = (mouseY - transform.y) / transform.scale;
-			
-			const delta = e.deltaY > 0 ? 0.97 : 1.03;
-			const newScale = Math.max(0.2, Math.min(3, transform.scale * delta));
-			
-			transform = {
-				x: mouseX - canvasX * newScale,
-				y: mouseY - canvasY * newScale,
-				scale: newScale
-			};
-		} else {
-			transform = {
-				...transform,
-				x: transform.x - e.deltaX,
-				y: transform.y - e.deltaY
-			};
-		}
+		const rect = canvasEl.getBoundingClientRect();
+		const mouseX = e.clientX - rect.left;
+		const mouseY = e.clientY - rect.top;
+		
+		const canvasX = (mouseX - transform.x) / transform.scale;
+		const canvasY = (mouseY - transform.y) / transform.scale;
+		
+		const delta = e.deltaY > 0 ? 0.97 : 1.03;
+		const newScale = Math.max(0.2, Math.min(3, transform.scale * delta));
+		
+		transform = {
+			x: mouseX - canvasX * newScale,
+			y: mouseY - canvasY * newScale,
+			scale: newScale
+		};
 	}
 
 	function handleRunToNode(e: MouseEvent, nodeName: string) {
@@ -495,30 +393,31 @@
 		const ancestors = getAncestors(nodeName);
 		const nodesToExecute = [...ancestors, nodeName];
 		
-		const nodesToMark = nodesToExecute.filter(n => {
-			if (n === nodeName) return true;
-			const results = nodeResults[n];
-			return !results || results.length === 0;
-		});
+		// Only add pending badges for nodes that don't already have results (will be skipped on backend)
+		const nodesToRun = nodesToExecute.filter(n => !nodeResults[n] || nodeResults[n].length === 0);
 		
-		for (const nodeToMark of nodesToMark) {
-			if (!pendingRunIds[nodeToMark]) {
-				pendingRunIds[nodeToMark] = [];
+		for (const nodeToRun of nodesToRun) {
+			if (!pendingRunIds[nodeToRun]) {
+				pendingRunIds[nodeToRun] = [];
 			}
-			pendingRunIds[nodeToMark] = [...pendingRunIds[nodeToMark], runId];
+			pendingRunIds[nodeToRun] = [...pendingRunIds[nodeToRun], runId];
 		}
 		
-		runIdToNodes[runId] = nodesToMark;
+		// Track which nodes this run_id will actually execute
+		runIdToNodes[runId] = nodesToRun;
 		
-		if (ws && wsConnected) {
-			ws.send(JSON.stringify({
-				action: 'run',
-				node_name: nodeName,
-				inputs: inputValues,
-				item_list_values: itemListValues,
-				selected_results: selectedResultIndex,
-				run_id: runId
-			}));
+		if (gradio.props.value) {
+			const newValue = {
+				...gradio.props.value,
+				inputs: { ...gradio.props.value.inputs, ...inputValues },
+				item_list_values: { ...itemListValues },
+				run_to_node: nodeName,
+				run_id: runId,
+				completed_node: null,
+				selected_results: { ...selectedResultIndex }  // Pass selected result indices to backend
+			};
+			gradio.props.value = newValue;
+			gradio.dispatch("change", newValue);
 		}
 	}
 
@@ -533,6 +432,60 @@
 		return `background: ${colors[type] || '#666'};`;
 	}
 
+	// Process incoming results from backend (streaming)
+	$effect(() => {
+		try {
+			const data = gradio.props.value;
+			if (!data) return;
+			
+			const runId = data.run_id;
+			const completedNode = data.completed_node;
+			if (!runId || !completedNode) return;
+			
+			const completionKey = `${runId}:${completedNode}`;
+			
+			if (globalProcessedSet.has(completionKey)) return;
+			globalProcessedSet.add(completionKey);
+			
+			if (pendingRunIds[completedNode]) {
+				pendingRunIds[completedNode] = pendingRunIds[completedNode].filter(id => id !== runId);
+			}
+			
+			const executedNodes = runIdToNodes[runId];
+			if (executedNodes) {
+				const allDone = executedNodes.every(n => globalProcessedSet.has(`${runId}:${n}`));
+				if (allDone) {
+					delete runIdToNodes[runId];
+					setTimeout(() => {
+						for (const n of executedNodes) {
+							globalProcessedSet.delete(`${runId}:${n}`);
+						}
+					}, 1000);
+				}
+			}
+			
+			const node = data.nodes?.find((n: GraphNode) => n.name === completedNode);
+			if (node && node.output_components?.length > 0) {
+				const hasResult = node.output_components.some((c: GradioComponentData) => c.value != null);
+				if (hasResult) {
+					if (!nodeResults[completedNode]) {
+						nodeResults[completedNode] = [];
+					}
+					
+					const resultSnapshot = node.output_components.map((c: GradioComponentData) => ({
+						...c
+					}));
+					
+					nodeResults[completedNode] = [...nodeResults[completedNode], resultSnapshot];
+					selectedResultIndex[completedNode] = nodeResults[completedNode].length - 1;
+				}
+			}
+		} catch (err) {
+			console.error('[daggr] Error processing result:', err);
+		}
+	});
+
+	// Get the currently selected results for a node
 	function getSelectedResults(node: GraphNode): GradioComponentData[] {
 		const results = nodeResults[node.name];
 		if (!results || results.length === 0) {
@@ -542,10 +495,12 @@
 		return results[idx] || node.output_components || [];
 	}
 
+	// Get total result count for a node
 	function getResultCount(nodeName: string): number {
 		return nodeResults[nodeName]?.length || 0;
 	}
 
+	// Navigate to previous result
 	function prevResult(e: MouseEvent, nodeName: string) {
 		e.stopPropagation();
 		const current = selectedResultIndex[nodeName] ?? 0;
@@ -554,6 +509,7 @@
 		}
 	}
 
+	// Navigate to next result
 	function nextResult(e: MouseEvent, nodeName: string) {
 		e.stopPropagation();
 		const total = getResultCount(nodeName);
@@ -563,18 +519,23 @@
 		}
 	}
 
+	// Zoom percentage display
 	let zoomPercent = $derived(Math.round(transform.scale * 100));
 
+	// Toggle map node expansion
 	function toggleMapExpand(e: MouseEvent, nodeName: string) {
 		e.stopPropagation();
 		expandedMapNodes[nodeName] = !expandedMapNodes[nodeName];
 	}
 
+	// Replay individual map item
 	function handleReplayItem(e: MouseEvent, nodeName: string, itemIndex: number) {
 		e.stopPropagation();
+		// TODO: Implement individual item replay via backend
 		console.log(`Replay item ${itemIndex} for node ${nodeName}`);
 	}
 
+	// Get visible map items (first 3 or all if expanded)
 	function getVisibleMapItems(node: GraphNode): MapItem[] {
 		const items = node.map_items || [];
 		if (expandedMapNodes[node.name] || items.length <= 3) {
@@ -584,314 +545,328 @@
 	}
 </script>
 
-<div 
-	class="canvas"
-	bind:this={canvasEl}
-	onmousedown={handleMouseDown}
-	onmousemove={handleMouseMove}
-	onmouseup={handleMouseUp}
-	onmouseleave={handleMouseUp}
-	onwheel={handleWheel}
-	role="application"
+<Block
+	elem_id={gradio.shared.elem_id}
+	elem_classes={gradio.shared.elem_classes}
+	visible={gradio.shared.visible}
+	padding={false}
+	scale={gradio.shared.scale}
+	min_width={gradio.shared.min_width}
+	height={gradio.props.height || "100vh"}
+	allow_overflow={false}
+	flex={true}
 >
-	<div class="grid-bg"></div>
-
-	{#if !wsConnected}
-		<div class="connection-status">Connecting...</div>
-	{:else if !graphData}
-		<div class="connection-status">Loading graph...</div>
+	{#if gradio.shared.loading_status}
+		<StatusTracker
+			autoscroll={gradio.shared.autoscroll}
+			i18n={gradio.i18n}
+			{...gradio.shared.loading_status}
+			on_clear_status={() => gradio.dispatch("clear_status", gradio.shared.loading_status)}
+		/>
 	{/if}
 
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div 
-		class="canvas-transform"
-		style="transform: translate({transform.x}px, {transform.y}px) scale({transform.scale})"
+		class="canvas"
+		bind:this={canvasEl}
+		onmousedown={handleMouseDown}
+		onmousemove={handleMouseMove}
+		onmouseup={handleMouseUp}
+		onmouseleave={handleMouseUp}
+		onwheel={handleWheel}
+		role="application"
 	>
-		<svg class="edges-svg">
-			{#each edgePaths as edge (edge.id)}
-				<path 
-					d={edge.d} 
-					class="edge-path"
-				/>
-				{#if edge.forkPaths}
-					{#each edge.forkPaths as forkD}
-						<path d={forkD} class="edge-path edge-fork" />
-					{/each}
-				{/if}
-			{/each}
-		</svg>
+		<div class="grid-bg"></div>
 
-		{#each nodes as node (node.id)}
-			{@const componentsToRender = getComponentsToRender(node)}
-			<div 
-				class="node"
-				style="left: {node.x}px; top: {node.y}px; width: {NODE_WIDTH}px;"
-			>
-				<div class="node-header">
-					<span class="type-badge" style={getBadgeStyle(node.type)}>{node.type}</span>
-					<span class="node-name">{node.name}</span>
-					{#if !node.is_input_node}
-						<span 
-							class="run-btn"
-							class:running={runningCounts[node.name] > 0}
-							onclick={(e) => handleRunToNode(e, node.name)}
-							title={node.is_map_node ? "Run all items" : "Run to here"}
-							role="button"
-							tabindex="0"
-						>
-							{#if node.is_map_node}
-								<svg class="run-icon-svg run-icon-map" viewBox="0 0 14 12" fill="currentColor">
-									<path d="M2 1 L12 6 L2 11 Z" opacity="0.5" transform="translate(-2, 0)"/>
-									<path d="M2 1 L12 6 L2 11 Z" transform="translate(2, 0)"/>
-								</svg>
-							{:else}
-								<svg class="run-icon-svg" viewBox="0 0 10 12" fill="currentColor">
-									<path d="M1 1 L9 6 L1 11 Z"/>
-								</svg>
-							{/if}
-							{#if runningCounts[node.name] > 0}
-								<span class="run-badge">{runningCounts[node.name]}</span>
-							{/if}
-						</span>
+		<div 
+			class="canvas-transform"
+			style="transform: translate({transform.x}px, {transform.y}px) scale({transform.scale})"
+		>
+			<!-- Edges SVG (rendered first so it's behind nodes) -->
+			<svg class="edges-svg">
+				{#each edgePaths as edge (edge.id)}
+					<path 
+						d={edge.d} 
+						class="edge-path"
+					/>
+					{#if edge.forkPaths}
+						{#each edge.forkPaths as forkD}
+							<path d={forkD} class="edge-path edge-fork" />
+						{/each}
 					{/if}
-				</div>
+				{/each}
+			</svg>
 
-				<div class="node-body">
-					<div class="ports-left">
-						{#each node.inputs as port (port.name)}
-							<div class="port-row">
-								<span class="port-dot input"></span>
-								<span class="port-label">{port.name}</span>
-							</div>
-						{/each}
-					</div>
-					<div class="ports-right">
-						{#each node.outputs as portName (portName)}
-							<div class="port-row">
-								<span class="port-label">{portName}</span>
-								<span class="port-dot output"></span>
-							</div>
-						{/each}
-					</div>
-				</div>
-
-				{#if componentsToRender.length > 0}
-					<div class="embedded-components">
-						{#each componentsToRender as comp (comp.port_name)}
-							<div class="embedded-component">
-								{#if comp.component === 'textbox' || comp.component === 'text'}
-									<div class="gr-textbox-wrap">
-										<span class="gr-label">{comp.props?.label || comp.port_name}</span>
-										{#if comp.props?.lines && comp.props.lines > 1}
-											<textarea
-												class="gr-input"
-												placeholder={comp.props?.placeholder || ''}
-												rows={comp.props?.lines || 3}
-												disabled={!node.is_input_node}
-												value={getComponentValue(node, comp)}
-												oninput={(e) => handleInputChange(node.id, comp.port_name, (e.target as HTMLTextAreaElement).value)}
-											></textarea>
-										{:else}
-											<input
-												type="text"
-												class="gr-input"
-												placeholder={comp.props?.placeholder || ''}
-												disabled={!node.is_input_node}
-												value={getComponentValue(node, comp)}
-												oninput={(e) => handleInputChange(node.id, comp.port_name, (e.target as HTMLInputElement).value)}
-											/>
-										{/if}
-									</div>
-								{:else if comp.component === 'number'}
-									<div class="gr-textbox-wrap">
-										<span class="gr-label">{comp.props?.label || comp.port_name}</span>
-										<input
-											type="number"
-											class="gr-input"
-											disabled={!node.is_input_node}
-											value={getComponentValue(node, comp)}
-											oninput={(e) => handleInputChange(node.id, comp.port_name, parseFloat((e.target as HTMLInputElement).value))}
-										/>
-									</div>
-								{:else if comp.component === 'checkbox'}
-									<label class="gr-checkbox-wrap">
-										<input
-											type="checkbox"
-											disabled={!node.is_input_node}
-											checked={getComponentValue(node, comp)}
-											onchange={(e) => handleInputChange(node.id, comp.port_name, (e.target as HTMLInputElement).checked)}
-										/>
-										<span class="gr-check-label">{comp.props?.label || comp.port_name}</span>
-									</label>
-								{:else if comp.component === 'markdown'}
-									<div class="gr-textbox-wrap">
-										<span class="gr-label">{comp.props?.label || comp.port_name}</span>
-										<div class="gr-markdown">{@html comp.value || ''}</div>
-									</div>
-								{:else if comp.component === 'html'}
-									<div class="gr-textbox-wrap">
-										<span class="gr-label">{comp.props?.label || comp.port_name}</span>
-										<div class="gr-html">{@html comp.value || ''}</div>
-									</div>
-								{:else if comp.component === 'json'}
-									<div class="gr-textbox-wrap">
-										<span class="gr-label">{comp.props?.label || comp.port_name}</span>
-										<pre class="gr-json">{typeof comp.value === 'string' ? comp.value : JSON.stringify(comp.value, null, 2)}</pre>
-									</div>
-								{:else if comp.component === 'audio'}
-									<div class="gr-audio-wrap">
-										<span class="gr-label">{comp.props?.label || comp.port_name}</span>
-										{#if comp.value}
-											<div class="gr-audio-container">
-												<audio controls class="gr-audio" src={comp.value?.url || comp.value}></audio>
-											</div>
-										{:else}
-											<div class="gr-empty">No audio</div>
-										{/if}
-									</div>
-								{:else if comp.component === 'image'}
-									<div class="gr-textbox-wrap">
-										<span class="gr-label">{comp.props?.label || comp.port_name}</span>
-										{#if comp.value}
-											<img class="gr-image" src={comp.value?.url || comp.value} alt={comp.props?.label || ''} />
-										{:else}
-											<div class="gr-empty">No image</div>
-										{/if}
-									</div>
-								{:else}
-									<div class="gr-fallback">
-										<span class="fallback-type">{comp.component}</span>
-										{#if comp.value}
-											<pre>{typeof comp.value === 'string' ? comp.value : JSON.stringify(comp.value, null, 2)}</pre>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						{/each}
-					</div>
-					
-					{#if !node.is_input_node && getResultCount(node.name) > 1}
-						<div class="result-selector">
-							<button 
-								class="result-nav" 
-								onclick={(e) => prevResult(e, node.name)}
-								disabled={(selectedResultIndex[node.name] ?? 0) === 0}
-							>‹</button>
-							<span class="result-counter">
-								{(selectedResultIndex[node.name] ?? 0) + 1}/{getResultCount(node.name)}
-							</span>
-							<button 
-								class="result-nav" 
-								onclick={(e) => nextResult(e, node.name)}
-								disabled={(selectedResultIndex[node.name] ?? 0) >= getResultCount(node.name) - 1}
-							>›</button>
-						</div>
-					{/if}
-				{/if}
-
-				{#if node.is_map_node && node.map_items && node.map_items.length > 0}
-					<div class="map-items-section">
-						<div class="map-items-header">
-							<span class="map-items-title">Items ({node.map_items.length})</span>
-						</div>
-						<div class="map-items-list">
-							{#each getVisibleMapItems(node) as item (item.index)}
-								<div class="map-item" class:has-output={item.output}>
-									<span class="map-item-index">{item.index}.</span>
-									<span class="map-item-preview" title={item.preview}>
-										{item.preview.length > 25 ? item.preview.slice(0, 25) + '...' : item.preview}
-									</span>
-									<button 
-										class="map-item-replay"
-										onclick={(e) => handleReplayItem(e, node.name, item.index)}
-										title={item.output ? "Replay this item" : "Run this item"}
-									>
-										{item.output ? '↻' : '▶'}
-									</button>
-								</div>
-							{/each}
-						</div>
-						{#if node.map_items.length > 3}
-							<button 
-								class="map-expand-btn"
-								onclick={(e) => toggleMapExpand(e, node.name)}
+			<!-- Nodes -->
+			{#each nodes as node (node.id)}
+				{@const componentsToRender = getComponentsToRender(node)}
+				<div 
+					class="node"
+					style="left: {node.x}px; top: {node.y}px; width: {NODE_WIDTH}px;"
+				>
+					<div class="node-header">
+						<span class="type-badge" style={getBadgeStyle(node.type)}>{node.type}</span>
+						<span class="node-name">{node.name}</span>
+						{#if !node.is_input_node}
+							<span 
+								class="run-btn"
+								class:running={runningCounts[node.name] > 0}
+								onclick={(e) => handleRunToNode(e, node.name)}
+								title={node.is_map_node ? "Run all items" : "Run to here"}
+								role="button"
+								tabindex="0"
 							>
-								{expandedMapNodes[node.name] ? '▲ Show less' : `▼ Show all (${node.map_items.length})`}
-							</button>
+								{#if node.is_map_node}
+									<svg class="run-icon-svg run-icon-map" viewBox="0 0 14 12" fill="currentColor">
+										<path d="M2 1 L12 6 L2 11 Z" opacity="0.5" transform="translate(-2, 0)"/>
+										<path d="M2 1 L12 6 L2 11 Z" transform="translate(2, 0)"/>
+									</svg>
+								{:else}
+									<svg class="run-icon-svg" viewBox="0 0 10 12" fill="currentColor">
+										<path d="M1 1 L9 6 L1 11 Z"/>
+									</svg>
+								{/if}
+								{#if runningCounts[node.name] > 0}
+									<span class="run-badge">{runningCounts[node.name]}</span>
+								{/if}
+							</span>
 						{/if}
 					</div>
-				{/if}
 
-				{#if node.item_list_schema && node.item_list_items && node.item_list_items.length > 0}
-					<div class="item-list-section">
-						<div class="item-list-header">
-							<span class="item-list-title">Items ({node.item_list_items.length})</span>
+					<div class="node-body">
+						<div class="ports-left">
+							{#each node.inputs as port (port.name)}
+								<div class="port-row">
+									<span class="port-dot input"></span>
+									<span class="port-label">{port.name}</span>
+								</div>
+							{/each}
 						</div>
-						<div class="item-list-items">
-							{#each node.item_list_items as item (item.index)}
-								<div class="item-list-item">
-									<span class="item-list-index">{item.index + 1}.</span>
-									<div class="item-list-fields">
-										{#each node.item_list_schema as comp (comp.port_name)}
-											{#if comp.component === 'dropdown'}
-												<select
-													class="gr-select"
-													value={getItemListValue(node, item.index, comp.port_name)}
-													onchange={(e) => handleItemListChange(node.id, item.index, comp.port_name, (e.target as HTMLSelectElement).value)}
-												>
-													{#each comp.props?.choices || [] as choice}
-														<option value={choice}>{choice}</option>
-													{/each}
-												</select>
-											{:else if comp.component === 'textbox' || comp.component === 'text'}
-												{#if comp.props?.lines && comp.props.lines > 1}
-													<textarea
-														class="gr-input item-list-textarea"
-														rows={comp.props?.lines || 2}
-														value={getItemListValue(node, item.index, comp.port_name)}
-														oninput={(e) => handleItemListChange(node.id, item.index, comp.port_name, (e.target as HTMLTextAreaElement).value)}
-													></textarea>
-												{:else}
-													<input
-														type="text"
-														class="gr-input"
-														value={getItemListValue(node, item.index, comp.port_name)}
-														oninput={(e) => handleItemListChange(node.id, item.index, comp.port_name, (e.target as HTMLInputElement).value)}
-													/>
-												{/if}
-											{/if}
-										{/each}
-									</div>
+						<div class="ports-right">
+							{#each node.outputs as portName (portName)}
+								<div class="port-row">
+									<span class="port-label">{portName}</span>
+									<span class="port-dot output"></span>
 								</div>
 							{/each}
 						</div>
 					</div>
-				{/if}
-			</div>
-		{/each}
-	</div>
 
-	<div class="zoom-controls">
-		<button class="zoom-btn" onclick={zoomOut} title="Zoom out">−</button>
-		<span class="zoom-level">{zoomPercent}%</span>
-		<button class="zoom-btn" onclick={zoomIn} title="Zoom in">+</button>
-		<button class="zoom-btn fit-btn" onclick={zoomToFit} title="Fit all nodes">⊡</button>
-	</div>
+					{#if componentsToRender.length > 0}
+						<div class="embedded-components">
+							{#each componentsToRender as comp (comp.port_name)}
+								<div class="embedded-component">
+									{#if comp.component === 'textbox' || comp.component === 'text'}
+										<div class="gr-textbox-wrap">
+											<span class="gr-label">{comp.props?.label || comp.port_name}</span>
+											{#if comp.props?.lines && comp.props.lines > 1}
+												<textarea
+													class="gr-input"
+													placeholder={comp.props?.placeholder || ''}
+													rows={comp.props?.lines || 3}
+													disabled={!node.is_input_node}
+													value={getComponentValue(node, comp)}
+													oninput={(e) => handleInputChange(node.id, comp.port_name, (e.target as HTMLTextAreaElement).value)}
+												></textarea>
+											{:else}
+												<input
+													type="text"
+													class="gr-input"
+													placeholder={comp.props?.placeholder || ''}
+													disabled={!node.is_input_node}
+													value={getComponentValue(node, comp)}
+													oninput={(e) => handleInputChange(node.id, comp.port_name, (e.target as HTMLInputElement).value)}
+												/>
+											{/if}
+										</div>
+									{:else if comp.component === 'number'}
+										<div class="gr-textbox-wrap">
+											<span class="gr-label">{comp.props?.label || comp.port_name}</span>
+											<input
+												type="number"
+												class="gr-input"
+												disabled={!node.is_input_node}
+												value={getComponentValue(node, comp)}
+												oninput={(e) => handleInputChange(node.id, comp.port_name, parseFloat((e.target as HTMLInputElement).value))}
+											/>
+										</div>
+									{:else if comp.component === 'checkbox'}
+										<label class="gr-checkbox-wrap">
+											<input
+												type="checkbox"
+												disabled={!node.is_input_node}
+												checked={getComponentValue(node, comp)}
+												onchange={(e) => handleInputChange(node.id, comp.port_name, (e.target as HTMLInputElement).checked)}
+											/>
+											<span class="gr-check-label">{comp.props?.label || comp.port_name}</span>
+										</label>
+{:else if comp.component === 'markdown'}
+								<div class="gr-textbox-wrap">
+									<span class="gr-label">{comp.props?.label || comp.port_name}</span>
+									<div class="gr-markdown">{@html comp.value || ''}</div>
+								</div>
+							{:else if comp.component === 'html'}
+								<div class="gr-textbox-wrap">
+									<span class="gr-label">{comp.props?.label || comp.port_name}</span>
+									<div class="gr-html">{@html comp.value || ''}</div>
+								</div>
+							{:else if comp.component === 'json'}
+										<div class="gr-textbox-wrap">
+											<span class="gr-label">{comp.props?.label || comp.port_name}</span>
+											<pre class="gr-json">{typeof comp.value === 'string' ? comp.value : JSON.stringify(comp.value, null, 2)}</pre>
+										</div>
+									{:else if comp.component === 'audio'}
+										<div class="gr-audio-wrap">
+											<span class="gr-label">{comp.props?.label || comp.port_name}</span>
+											{#if comp.value}
+												<div class="gr-audio-container">
+													<audio controls class="gr-audio" src={comp.value?.url || comp.value}></audio>
+												</div>
+											{:else}
+												<div class="gr-empty">No audio</div>
+											{/if}
+										</div>
+									{:else if comp.component === 'image'}
+										<div class="gr-textbox-wrap">
+											<span class="gr-label">{comp.props?.label || comp.port_name}</span>
+											{#if comp.value}
+												<img class="gr-image" src={comp.value?.url || comp.value} alt={comp.props?.label || ''} />
+											{:else}
+												<div class="gr-empty">No image</div>
+											{/if}
+										</div>
+									{:else}
+										<div class="gr-fallback">
+											<span class="fallback-type">{comp.component}</span>
+											{#if comp.value}
+												<pre>{typeof comp.value === 'string' ? comp.value : JSON.stringify(comp.value, null, 2)}</pre>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{/each}
+						</div>
+						
+						{#if !node.is_input_node && getResultCount(node.name) > 1}
+							<div class="result-selector">
+								<button 
+									class="result-nav" 
+									onclick={(e) => prevResult(e, node.name)}
+									disabled={(selectedResultIndex[node.name] ?? 0) === 0}
+								>‹</button>
+								<span class="result-counter">
+									{(selectedResultIndex[node.name] ?? 0) + 1}/{getResultCount(node.name)}
+								</span>
+								<button 
+									class="result-nav" 
+									onclick={(e) => nextResult(e, node.name)}
+									disabled={(selectedResultIndex[node.name] ?? 0) >= getResultCount(node.name) - 1}
+								>›</button>
+							</div>
+						{/if}
+					{/if}
 
-	<div class="title-bar">
-		<span class="title">{graphData?.name || 'daggr'}</span>
+					{#if node.is_map_node && node.map_items && node.map_items.length > 0}
+						<div class="map-items-section">
+							<div class="map-items-header">
+								<span class="map-items-title">Items ({node.map_items.length})</span>
+							</div>
+							<div class="map-items-list">
+								{#each getVisibleMapItems(node) as item (item.index)}
+									<div class="map-item" class:has-output={item.output}>
+										<span class="map-item-index">{item.index}.</span>
+										<span class="map-item-preview" title={item.preview}>
+											{item.preview.length > 25 ? item.preview.slice(0, 25) + '...' : item.preview}
+										</span>
+										<button 
+											class="map-item-replay"
+											onclick={(e) => handleReplayItem(e, node.name, item.index)}
+											title={item.output ? "Replay this item" : "Run this item"}
+										>
+											{item.output ? '↻' : '▶'}
+										</button>
+									</div>
+								{/each}
+							</div>
+							{#if node.map_items.length > 3}
+								<button 
+									class="map-expand-btn"
+									onclick={(e) => toggleMapExpand(e, node.name)}
+								>
+									{expandedMapNodes[node.name] ? '▲ Show less' : `▼ Show all (${node.map_items.length})`}
+								</button>
+							{/if}
+						</div>
+					{/if}
+
+					{#if node.item_list_schema && node.item_list_items && node.item_list_items.length > 0}
+						<div class="item-list-section">
+							<div class="item-list-header">
+								<span class="item-list-title">Items ({node.item_list_items.length})</span>
+							</div>
+							<div class="item-list-items">
+								{#each node.item_list_items as item (item.index)}
+									<div class="item-list-item">
+										<span class="item-list-index">{item.index + 1}.</span>
+										<div class="item-list-fields">
+											{#each node.item_list_schema as comp (comp.port_name)}
+												{#if comp.component === 'dropdown'}
+													<select
+														class="gr-select"
+														value={getItemListValue(node, item.index, comp.port_name)}
+														onchange={(e) => handleItemListChange(node.id, item.index, comp.port_name, (e.target as HTMLSelectElement).value)}
+													>
+														{#each comp.props?.choices || [] as choice}
+															<option value={choice}>{choice}</option>
+														{/each}
+													</select>
+												{:else if comp.component === 'textbox' || comp.component === 'text'}
+													{#if comp.props?.lines && comp.props.lines > 1}
+														<textarea
+															class="gr-input item-list-textarea"
+															rows={comp.props?.lines || 2}
+															value={getItemListValue(node, item.index, comp.port_name)}
+															oninput={(e) => handleItemListChange(node.id, item.index, comp.port_name, (e.target as HTMLTextAreaElement).value)}
+														></textarea>
+													{:else}
+														<input
+															type="text"
+															class="gr-input"
+															value={getItemListValue(node, item.index, comp.port_name)}
+															oninput={(e) => handleItemListChange(node.id, item.index, comp.port_name, (e.target as HTMLInputElement).value)}
+														/>
+													{/if}
+												{/if}
+											{/each}
+										</div>
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
+
+		<!-- Zoom Controls -->
+		<div class="zoom-controls">
+			<button class="zoom-btn" onclick={zoomOut} title="Zoom out">−</button>
+			<span class="zoom-level">{zoomPercent}%</span>
+			<button class="zoom-btn" onclick={zoomIn} title="Zoom in">+</button>
+			<button class="zoom-btn fit-btn" onclick={zoomToFit} title="Fit all nodes">⊡</button>
+		</div>
 	</div>
-</div>
+</Block>
 
 <style>
 	.canvas {
-		position: fixed;
-		inset: 0;
-		width: 100vw;
-		height: 100vh;
+		position: relative;
+		width: 100%;
+		height: 100%;
 		overflow: hidden;
 		background: #0c0c0c;
 		cursor: grab;
-		font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 	}
 
 	.canvas:active {
@@ -913,39 +888,9 @@
 		transform-origin: 0 0;
 	}
 
-	.connection-status {
-		position: fixed;
-		top: 16px;
-		right: 16px;
-		background: rgba(249, 115, 22, 0.9);
-		color: #000;
-		padding: 8px 16px;
-		border-radius: 8px;
-		font-size: 12px;
-		font-weight: 600;
-		z-index: 1000;
-	}
-
-	.title-bar {
-		position: fixed;
-		top: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		background: rgba(20, 20, 20, 0.9);
-		border: 1px solid rgba(249, 115, 22, 0.2);
-		border-radius: 8px;
-		padding: 8px 20px;
-		z-index: 100;
-	}
-
-	.title {
-		font-size: 14px;
-		font-weight: 600;
-		color: #f97316;
-	}
-
+	/* Zoom controls */
 	.zoom-controls {
-		position: fixed;
+		position: absolute;
 		bottom: 16px;
 		left: 16px;
 		display: flex;
@@ -996,6 +941,7 @@
 		font-family: 'SF Mono', Monaco, monospace;
 	}
 
+	/* SVG for edges */
 	.edges-svg {
 		position: absolute;
 		top: 0;
@@ -1017,6 +963,7 @@
 		stroke-width: 2;
 	}
 
+	/* Node */
 	.node {
 		position: absolute;
 		background: linear-gradient(175deg, rgba(24, 24, 24, 0.92) 0%, rgba(18, 18, 18, 0.92) 100%);
@@ -1401,6 +1348,7 @@
 		text-align: center;
 	}
 
+	/* Map items section */
 	.map-items-section {
 		border-top: 1px solid rgba(168, 85, 247, 0.2);
 		background: rgba(168, 85, 247, 0.03);
@@ -1578,4 +1526,3 @@
 		min-height: 40px;
 	}
 </style>
-

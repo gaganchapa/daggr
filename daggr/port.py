@@ -20,6 +20,15 @@ class Port:
     def _as_target(self) -> tuple[Node, str]:
         return (self.node, self.name)
 
+    def __getattr__(self, attr: str) -> ScatteredPort:
+        if attr.startswith("_"):
+            raise AttributeError(attr)
+        if hasattr(self.node, "_item_list_schemas") and self.name in self.node._item_list_schemas:
+            schema = self.node._item_list_schemas[self.name]
+            if attr in schema:
+                return ScatteredPort(self, attr)
+        raise AttributeError(f"Port '{self.name}' has no attribute '{attr}'")
+
     @property
     def each(self) -> ScatteredPort:
         """Scatter this port's output - run the downstream node once per item in the list."""

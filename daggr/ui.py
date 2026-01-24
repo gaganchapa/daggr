@@ -269,6 +269,7 @@ class UIGenerator:
         synthetic_edges: List[Dict[str, Any]] = []
         input_node_positions: Dict[str, tuple] = {}
 
+        creation_order = 0
         for node_name in self.graph.nodes:
             node = self.graph.nodes[node_name]
             if node._input_components:
@@ -292,8 +293,10 @@ class UIGenerator:
                             "target_port": port_name,
                             "component": comp_data,
                             "index": idx,
+                            "creation_order": creation_order,
                         }
                     )
+                    creation_order += 1
 
                     synthetic_edges.append(
                         {
@@ -335,9 +338,7 @@ class UIGenerator:
         for syn_node in synthetic_input_nodes:
             target_depth = depths.get(syn_node["target_node"], 0)
             all_input_nodes_sorted.append({**syn_node, "target_depth": target_depth})
-        all_input_nodes_sorted.sort(
-            key=lambda x: (x["target_depth"], x["target_node"], x["index"])
-        )
+        all_input_nodes_sorted.sort(key=lambda x: x["creation_order"])
 
         current_input_y = y_start
         for syn_node in all_input_nodes_sorted:

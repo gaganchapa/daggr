@@ -58,6 +58,7 @@ class DaggrServer:
                     if action == "run":
                         node_name = data.get("node_name")
                         input_values = data.get("inputs", {})
+                        item_list_values = data.get("item_list_values", {})
                         selected_results = data.get("selected_results", {})
                         run_id = data.get("run_id")
 
@@ -65,6 +66,7 @@ class DaggrServer:
                             node_name,
                             session_id,
                             input_values,
+                            item_list_values,
                             selected_results,
                             run_id,
                         ):
@@ -177,6 +179,7 @@ class DaggrServer:
             "Number": "number",
             "Markdown": "markdown",
             "Text": "text",
+            "Dropdown": "dropdown",
         }
         return type_map.get(class_name, "text")
 
@@ -199,6 +202,8 @@ class DaggrServer:
             props["max_lines"] = comp.max_lines
         if hasattr(comp, "type"):
             props["type"] = comp.type
+        if hasattr(comp, "choices") and comp.choices:
+            props["choices"] = comp.choices
 
         return {
             "component": comp_class.lower(),
@@ -284,6 +289,56 @@ class DaggrServer:
                 )
         return items
 
+    def _serialize_item_list_schema(
+        self, schema: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        serialized = []
+        for field_name, comp in schema.items():
+            comp_data = self._serialize_component(comp, field_name)
+            serialized.append(comp_data)
+        return serialized
+
+    def _build_item_list_items(
+        self, node, port_name: str, result: Any = None
+    ) -> List[Dict[str, Any]]:
+        schema = node._item_list_schemas.get(port_name, {})
+        if not schema:
+            return []
+
+        items = []
+        if result and isinstance(result, dict) and port_name in result:
+            item_list = result[port_name]
+            if isinstance(item_list, list):
+                for i, item_data in enumerate(item_list):
+                    item = {"index": i, "fields": {}}
+                    if isinstance(item_data, dict):
+                        for field_name in schema:
+                            item["fields"][field_name] = item_data.get(field_name)
+                    items.append(item)
+        return items
+
+    def _apply_item_list_edits(
+        self, node_name: str, result: Any, item_list_values: Dict
+    ) -> Any:
+        node = self.graph.nodes[node_name]
+        if not node._item_list_schemas:
+            return result
+
+        node_id = node_name.replace(" ", "_").replace("-", "_")
+        edits = item_list_values.get(node_id, {})
+        if not edits:
+            return result
+
+        first_port = list(node._item_list_schemas.keys())[0]
+        if isinstance(result, dict) and first_port in result:
+            items = result[first_port]
+            if isinstance(items, list):
+                for idx_str, field_edits in edits.items():
+                    idx = int(idx_str)
+                    if 0 <= idx < len(items) and isinstance(items[idx], dict):
+                        items[idx].update(field_edits)
+        return result
+
     def _compute_node_depths(self) -> Dict[str, int]:
         depths: Dict[str, int] = {}
         connections = self.graph.get_connections()
@@ -327,6 +382,7 @@ class DaggrServer:
         synthetic_edges: List[Dict[str, Any]] = []
         input_node_positions: Dict[str, tuple] = {}
 
+        creation_order = 0
         for node_name in self.graph.nodes:
             node = self.graph.nodes[node_name]
             if node._input_components:
@@ -350,8 +406,10 @@ class DaggrServer:
                             "target_port": port_name,
                             "component": comp_data,
                             "index": idx,
+                            "creation_order": creation_order,
                         }
                     )
+                    creation_order += 1
 
                     synthetic_edges.append(
                         {
@@ -393,9 +451,7 @@ class DaggrServer:
         for syn_node in synthetic_input_nodes:
             target_depth = depths.get(syn_node["target_node"], 0)
             all_input_nodes_sorted.append({**syn_node, "target_depth": target_depth})
-        all_input_nodes_sorted.sort(
-            key=lambda x: (x["target_depth"], x["target_node"], x["index"])
-        )
+        all_input_nodes_sorted.sort(key=lambda x: x["creation_order"])
 
         current_input_y = y_start
         for syn_node in all_input_nodes_sorted:
@@ -500,6 +556,24 @@ class DaggrServer:
             ):
                 item_output_type = "audio"
 
+            item_list_schema = None
+            item_list_items = []
+            if node._item_list_schemas:
+                first_port = list(node._item_list_schemas.keys())[0]
+                item_list_schema = self._serialize_item_list_schema(
+                    node._item_list_schemas[first_port]
+                )
+                item_list_items = self._build_item_list_items(node, first_port, result)
+
+            output_ports = []
+            for port_name in (node._output_ports or []):
+                if port_name in node._item_list_schemas:
+                    schema = node._item_list_schemas[port_name]
+                    for field_name in schema:
+                        output_ports.append(f"{port_name}.{field_name}")
+                else:
+                    output_ports.append(port_name)
+
             is_output = self._is_output_node(node_name)
 
             nodes.append(
@@ -508,7 +582,7 @@ class DaggrServer:
                     "name": node_name,
                     "type": self._get_node_type(node, node_name),
                     "inputs": input_ports_data,
-                    "outputs": node._output_ports or [],
+                    "outputs": output_ports,
                     "x": x,
                     "y": y,
                     "has_input": False,
@@ -519,6 +593,8 @@ class DaggrServer:
                     "map_items": scattered_items,
                     "map_item_count": len(scattered_items),
                     "item_output_type": item_output_type,
+                    "item_list_schema": item_list_schema,
+                    "item_list_items": item_list_items,
                     "status": node_statuses.get(node_name, "pending"),
                     "result": result_str,
                     "is_output_node": is_output,
@@ -528,13 +604,16 @@ class DaggrServer:
 
         edges = []
         for i, edge in enumerate(self.graph._edges):
+            from_port = edge.source_port
+            if edge.item_key:
+                from_port = f"{edge.source_port}.{edge.item_key}"
             edges.append(
                 {
                     "id": f"edge_{i}",
                     "from_node": edge.source_node._name.replace(" ", "_").replace(
                         "-", "_"
                     ),
-                    "from_port": edge.source_port,
+                    "from_port": from_port,
                     "to_node": edge.target_node._name.replace(" ", "_").replace(
                         "-", "_"
                     ),
@@ -646,6 +725,7 @@ class DaggrServer:
         target_node: str,
         session_id: str,
         input_values: Dict[str, Any],
+        item_list_values: Dict[str, Any],
         selected_results: Dict[str, int],
         run_id: str,
     ):
@@ -695,7 +775,12 @@ class DaggrServer:
         try:
             for node_name in nodes_to_execute:
                 if node_name in existing_results:
-                    node_results[node_name] = existing_results[node_name]
+                    result = existing_results[node_name]
+                    result = self._apply_item_list_edits(
+                        node_name, result, item_list_values
+                    )
+                    node_results[node_name] = result
+                    self.executor.results[node_name] = result
                     node_statuses[node_name] = "completed"
                     continue
 
@@ -706,6 +791,10 @@ class DaggrServer:
                     self.executor.execute_node, node_name, user_input
                 )
 
+                result = self._apply_item_list_edits(
+                    node_name, result, item_list_values
+                )
+                self.executor.results[node_name] = result
                 node_results[node_name] = result
                 node_statuses[node_name] = "completed"
                 self.state.save_result(session_id, node_name, result)
