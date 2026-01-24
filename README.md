@@ -9,7 +9,7 @@
   </div>
 </h3>
 
-`daggr` is a Python library for building AI workflows that connect Gradio Spaces, ML models (through Hugging Face Inference Providers), and custom functions. It automatically generates a visual canvas or your workflow allowing you to inspect intermediate outputs, rerun any step, and preserves state for complex workflows.
+`daggr` is a Python library for building AI workflows that connect Gradio Spaces, ML models (through Hugging Face Inference Providers), and custom functions. It automatically generates a visual canvas for your workflow allowing you to inspect intermediate outputs, rerun any step any number of times, and also preserves state for complex workflows.
 
 
 
