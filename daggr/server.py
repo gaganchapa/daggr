@@ -566,7 +566,7 @@ class DaggrServer:
                 item_list_items = self._build_item_list_items(node, first_port, result)
 
             output_ports = []
-            for port_name in (node._output_ports or []):
+            for port_name in node._output_ports or []:
                 if port_name in node._item_list_schemas:
                     schema = node._item_list_schemas[port_name]
                     for field_name in schema:

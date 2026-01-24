@@ -23,7 +23,10 @@ class Port:
     def __getattr__(self, attr: str) -> ScatteredPort:
         if attr.startswith("_"):
             raise AttributeError(attr)
-        if hasattr(self.node, "_item_list_schemas") and self.name in self.node._item_list_schemas:
+        if (
+            hasattr(self.node, "_item_list_schemas")
+            and self.name in self.node._item_list_schemas
+        ):
             schema = self.node._item_list_schemas[self.name]
             if attr in schema:
                 return ScatteredPort(self, attr)
