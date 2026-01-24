@@ -3,13 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, Response
-from fastapi.staticfiles import StaticFiles
 
 from daggr.executor import SequentialExecutor
 from daggr.state import SessionState
@@ -44,7 +42,9 @@ class DaggrServer:
             session_id = data.get("session_id")
             input_values = data.get("inputs", {})
             selected_results = data.get("selected_results", {})
-            return self._execute_to_node(node_name, session_id, input_values, selected_results)
+            return self._execute_to_node(
+                node_name, session_id, input_values, selected_results
+            )
 
         @self.app.websocket("/ws/{session_id}")
         async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -54,35 +54,45 @@ class DaggrServer:
                 while True:
                     data = await websocket.receive_json()
                     action = data.get("action")
-                    
+
                     if action == "run":
                         node_name = data.get("node_name")
                         input_values = data.get("inputs", {})
                         selected_results = data.get("selected_results", {})
                         run_id = data.get("run_id")
-                        
+
                         async for result in self._execute_to_node_streaming(
-                            node_name, session_id, input_values, selected_results, run_id
+                            node_name,
+                            session_id,
+                            input_values,
+                            selected_results,
+                            run_id,
                         ):
                             await websocket.send_json(result)
-                    
+
                     elif action == "get_graph":
                         try:
                             graph_data = self._build_graph_data()
                             graph_data["session_id"] = session_id
-                            await websocket.send_json({"type": "graph", "data": graph_data})
+                            await websocket.send_json(
+                                {"type": "graph", "data": graph_data}
+                            )
                         except Exception as e:
                             print(f"[ERROR] get_graph failed: {e}")
                             import traceback
+
                             traceback.print_exc()
-                            await websocket.send_json({"type": "error", "error": str(e)})
-                        
+                            await websocket.send_json(
+                                {"type": "error", "error": str(e)}
+                            )
+
             except WebSocketDisconnect:
                 if session_id in self.connections:
                     del self.connections[session_id]
             except Exception as e:
                 print(f"[ERROR] WebSocket error: {e}")
                 import traceback
+
                 traceback.print_exc()
 
         @self.app.get("/")
@@ -201,10 +211,14 @@ class DaggrServer:
     def _build_input_components(self, node) -> List[Dict[str, Any]]:
         if not node._input_components:
             return []
-        return [self._serialize_component(comp, port_name) 
-                for port_name, comp in node._input_components.items()]
+        return [
+            self._serialize_component(comp, port_name)
+            for port_name, comp in node._input_components.items()
+        ]
 
-    def _build_output_components(self, node, result: Any = None) -> List[Dict[str, Any]]:
+    def _build_output_components(
+        self, node, result: Any = None
+    ) -> List[Dict[str, Any]]:
         if not node._output_components:
             return []
 
@@ -217,13 +231,17 @@ class DaggrServer:
             comp_data = self._serialize_component(comp, port_name)
             if result is not None:
                 if isinstance(result, dict):
-                    comp_data["value"] = result.get(port_name, result.get(comp_data["props"]["label"]))
+                    comp_data["value"] = result.get(
+                        port_name, result.get(comp_data["props"]["label"])
+                    )
                 else:
                     comp_data["value"] = result
             components.append(comp_data)
         return components
 
-    def _build_scattered_items(self, node_name: str, result: Any = None) -> List[Dict[str, Any]]:
+    def _build_scattered_items(
+        self, node_name: str, result: Any = None
+    ) -> List[Dict[str, Any]]:
         scattered_edge = self._get_scattered_edge(node_name)
         if not scattered_edge:
             return []
@@ -242,7 +260,9 @@ class DaggrServer:
                 output = None
 
                 if isinstance(source_item, dict):
-                    preview_parts = [f"{k}: {str(v)[:20]}" for k, v in list(source_item.items())[:2]]
+                    preview_parts = [
+                        f"{k}: {str(v)[:20]}" for k, v in list(source_item.items())[:2]
+                    ]
                     preview = ", ".join(preview_parts)
                 elif source_item:
                     preview = str(source_item)[:50]
@@ -254,12 +274,14 @@ class DaggrServer:
                 else:
                     output = str(item_result) if item_result else None
 
-                items.append({
-                    "index": i + 1,
-                    "preview": preview or f"Item {i + 1}",
-                    "output": output,
-                    "is_audio_output": item_output_type == "audio",
-                })
+                items.append(
+                    {
+                        "index": i + 1,
+                        "preview": preview or f"Item {i + 1}",
+                        "output": output,
+                        "is_audio_output": item_output_type == "audio",
+                    }
+                )
         return items
 
     def _compute_node_depths(self) -> Dict[str, int]:
@@ -316,23 +338,29 @@ class DaggrServer:
                     label = comp_data["props"].get("label") or port_name
 
                     if input_node_name in input_values:
-                        comp_data["value"] = input_values[input_node_name].get("value", comp_data["value"])
+                        comp_data["value"] = input_values[input_node_name].get(
+                            "value", comp_data["value"]
+                        )
 
-                    synthetic_input_nodes.append({
-                        "node_name": input_node_name,
-                        "display_name": label,
-                        "target_node": node_name,
-                        "target_port": port_name,
-                        "component": comp_data,
-                        "index": idx,
-                    })
+                    synthetic_input_nodes.append(
+                        {
+                            "node_name": input_node_name,
+                            "display_name": label,
+                            "target_node": node_name,
+                            "target_port": port_name,
+                            "component": comp_data,
+                            "index": idx,
+                        }
+                    )
 
-                    synthetic_edges.append({
-                        "from_node": input_node_id,
-                        "from_port": "value",
-                        "to_node": node_name.replace(" ", "_").replace("-", "_"),
-                        "to_port": port_name,
-                    })
+                    synthetic_edges.append(
+                        {
+                            "from_node": input_node_id,
+                            "from_port": "value",
+                            "to_node": node_name.replace(" ", "_").replace("-", "_"),
+                            "to_port": port_name,
+                        }
+                    )
 
         max_depth = max(depths.values()) if depths else 0
 
@@ -365,11 +393,16 @@ class DaggrServer:
         for syn_node in synthetic_input_nodes:
             target_depth = depths.get(syn_node["target_node"], 0)
             all_input_nodes_sorted.append({**syn_node, "target_depth": target_depth})
-        all_input_nodes_sorted.sort(key=lambda x: (x["target_depth"], x["target_node"], x["index"]))
+        all_input_nodes_sorted.sort(
+            key=lambda x: (x["target_depth"], x["target_node"], x["index"])
+        )
 
         current_input_y = y_start
         for syn_node in all_input_nodes_sorted:
-            input_node_positions[syn_node["node_name"]] = (input_column_x, current_input_y)
+            input_node_positions[syn_node["node_name"]] = (
+                input_column_x,
+                current_input_y,
+            )
             node_height = calc_node_height([syn_node["component"]], 1)
             current_input_y += node_height + y_gap
 
@@ -380,7 +413,9 @@ class DaggrServer:
             for node_name in depth_nodes:
                 node = self.graph.nodes[node_name]
                 output_comps = self._build_output_components(node)
-                num_ports = max(len(node._input_ports or []), len(node._output_ports or []))
+                num_ports = max(
+                    len(node._input_ports or []), len(node._output_ports or [])
+                )
                 node_height = calc_node_height(output_comps, num_ports)
                 x = x_start + depth * x_spacing
                 node_positions[node_name] = (x, current_y)
@@ -395,27 +430,29 @@ class DaggrServer:
             x, y = input_node_positions.get(node_name, (50, 50))
             comp = syn_node["component"]
 
-            nodes.append({
-                "id": node_id,
-                "name": display_name,
-                "type": "INPUT",
-                "inputs": [],
-                "outputs": ["value"],
-                "x": x,
-                "y": y,
-                "has_input": False,
-                "input_value": "",
-                "input_components": [comp],
-                "output_components": [],
-                "is_map_node": False,
-                "map_items": [],
-                "map_item_count": 0,
-                "item_output_type": "text",
-                "status": "pending",
-                "result": "",
-                "is_output_node": False,
-                "is_input_node": True,
-            })
+            nodes.append(
+                {
+                    "id": node_id,
+                    "name": display_name,
+                    "type": "INPUT",
+                    "inputs": [],
+                    "outputs": ["value"],
+                    "x": x,
+                    "y": y,
+                    "has_input": False,
+                    "input_value": "",
+                    "input_components": [comp],
+                    "output_components": [],
+                    "is_map_node": False,
+                    "map_items": [],
+                    "map_item_count": 0,
+                    "item_output_type": "text",
+                    "status": "pending",
+                    "result": "",
+                    "is_output_node": False,
+                    "is_input_node": True,
+                }
+            )
 
         for node_name in self.graph.nodes:
             node = self.graph.nodes[node_name]
@@ -426,7 +463,9 @@ class DaggrServer:
             is_scattered = self._has_scattered_input(node_name)
             if result is not None and not node._output_components and not is_scattered:
                 if isinstance(result, dict):
-                    display_result = {k: v for k, v in result.items() if not k.startswith("_")}
+                    display_result = {
+                        k: v for k, v in result.items() if not k.startswith("_")
+                    }
                     result_str = json.dumps(display_result, indent=2, default=str)[:300]
                 elif isinstance(result, (list, tuple)):
                     result_str = json.dumps(list(result)[:5], default=str)
@@ -440,63 +479,81 @@ class DaggrServer:
                 if port in node._fixed_inputs:
                     continue
                 port_history = history.get(node_name, {}).get(port, [])
-                input_ports_data.append({
-                    "name": port,
-                    "history_count": len(port_history) if port_history else 0,
-                })
+                input_ports_data.append(
+                    {
+                        "name": port,
+                        "history_count": len(port_history) if port_history else 0,
+                    }
+                )
 
             output_components = self._build_output_components(node, result)
-            scattered_items = self._build_scattered_items(node_name, result) if is_scattered else []
+            scattered_items = (
+                self._build_scattered_items(node_name, result) if is_scattered else []
+            )
 
             item_output_type = "text"
             scattered_edge = self._get_scattered_edge(node_name)
-            if scattered_edge and scattered_edge.item_key and "audio" in scattered_edge.item_key.lower():
+            if (
+                scattered_edge
+                and scattered_edge.item_key
+                and "audio" in scattered_edge.item_key.lower()
+            ):
                 item_output_type = "audio"
 
             is_output = self._is_output_node(node_name)
 
-            nodes.append({
-                "id": node_id,
-                "name": node_name,
-                "type": self._get_node_type(node, node_name),
-                "inputs": input_ports_data,
-                "outputs": node._output_ports or [],
-                "x": x,
-                "y": y,
-                "has_input": False,
-                "input_value": input_values.get(node_name, ""),
-                "input_components": [],
-                "output_components": output_components,
-                "is_map_node": is_scattered,
-                "map_items": scattered_items,
-                "map_item_count": len(scattered_items),
-                "item_output_type": item_output_type,
-                "status": node_statuses.get(node_name, "pending"),
-                "result": result_str,
-                "is_output_node": is_output,
-                "is_input_node": False,
-            })
+            nodes.append(
+                {
+                    "id": node_id,
+                    "name": node_name,
+                    "type": self._get_node_type(node, node_name),
+                    "inputs": input_ports_data,
+                    "outputs": node._output_ports or [],
+                    "x": x,
+                    "y": y,
+                    "has_input": False,
+                    "input_value": input_values.get(node_name, ""),
+                    "input_components": [],
+                    "output_components": output_components,
+                    "is_map_node": is_scattered,
+                    "map_items": scattered_items,
+                    "map_item_count": len(scattered_items),
+                    "item_output_type": item_output_type,
+                    "status": node_statuses.get(node_name, "pending"),
+                    "result": result_str,
+                    "is_output_node": is_output,
+                    "is_input_node": False,
+                }
+            )
 
         edges = []
         for i, edge in enumerate(self.graph._edges):
-            edges.append({
-                "id": f"edge_{i}",
-                "from_node": edge.source_node._name.replace(" ", "_").replace("-", "_"),
-                "from_port": edge.source_port,
-                "to_node": edge.target_node._name.replace(" ", "_").replace("-", "_"),
-                "to_port": edge.target_port,
-                "is_scattered": edge.is_scattered,
-                "is_gathered": edge.is_gathered,
-            })
+            edges.append(
+                {
+                    "id": f"edge_{i}",
+                    "from_node": edge.source_node._name.replace(" ", "_").replace(
+                        "-", "_"
+                    ),
+                    "from_port": edge.source_port,
+                    "to_node": edge.target_node._name.replace(" ", "_").replace(
+                        "-", "_"
+                    ),
+                    "to_port": edge.target_port,
+                    "is_scattered": edge.is_scattered,
+                    "is_gathered": edge.is_gathered,
+                }
+            )
 
         for i, syn_edge in enumerate(synthetic_edges):
-            edges.append({
-                "id": f"input_edge_{i}",
-                "from_node": syn_edge["from_node"],
-                "from_port": syn_edge["from_port"],
-                "to_node": syn_edge["to_node"],
-                "to_port": syn_edge["to_port"],
-            })
+            edges.append(
+                {
+                    "id": f"input_edge_{i}",
+                    "from_node": syn_edge["from_node"],
+                    "from_port": syn_edge["from_port"],
+                    "to_node": syn_edge["to_node"],
+                    "to_port": syn_edge["to_port"],
+                }
+            )
 
         return {
             "name": self.graph.name,
@@ -554,7 +611,9 @@ class DaggrServer:
         if session_id:
             for node_name in nodes_to_execute:
                 if node_name in selected_results:
-                    cached = self.state.get_result_by_index(session_id, node_name, selected_results[node_name])
+                    cached = self.state.get_result_by_index(
+                        session_id, node_name, selected_results[node_name]
+                    )
                 else:
                     cached = self.state.get_latest_result(session_id, node_name)
                 if cached is not None:
@@ -578,7 +637,9 @@ class DaggrServer:
             node_statuses[node_name] = "completed"
             self.state.save_result(session_id, node_name, result)
 
-        return self._build_graph_data(node_results, node_statuses, input_values, {}, session_id)
+        return self._build_graph_data(
+            node_results, node_statuses, input_values, {}, session_id
+        )
 
     async def _execute_to_node_streaming(
         self,
@@ -618,7 +679,9 @@ class DaggrServer:
             if node_name == target_node:
                 continue
             if node_name in selected_results:
-                cached = self.state.get_result_by_index(session_id, node_name, selected_results[node_name])
+                cached = self.state.get_result_by_index(
+                    session_id, node_name, selected_results[node_name]
+                )
             else:
                 cached = self.state.get_latest_result(session_id, node_name)
             if cached is not None:
@@ -638,11 +701,11 @@ class DaggrServer:
 
                 node_statuses[node_name] = "running"
                 user_input = entry_inputs.get(node_name, {})
-                
+
                 result = await asyncio.to_thread(
                     self.executor.execute_node, node_name, user_input
                 )
-                
+
                 node_results[node_name] = result
                 node_statuses[node_name] = "completed"
                 self.state.save_result(session_id, node_name, result)
@@ -674,7 +737,7 @@ class DaggrServer:
 
     def run(self, host: str = "127.0.0.1", port: int = 7860, **kwargs):
         import uvicorn
+
         self.graph._validate_edges()
         print(f"\n  daggr running at http://{host}:{port}\n")
         uvicorn.run(self.app, host=host, port=port, **kwargs)
-

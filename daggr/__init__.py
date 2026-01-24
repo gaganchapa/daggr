@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-__version__ = json.loads((Path(__file__).parent / "package.json").read_text())["version"]
+__version__ = json.loads((Path(__file__).parent / "package.json").read_text())[
+    "version"
+]
 
 from daggr.edge import Edge
 from daggr.graph import Graph
