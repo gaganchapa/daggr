@@ -1,11 +1,12 @@
-from daggr import GradioNode
+import random
 
-from gradio_client import Client, handle_file
+import gradio as gr
 
+from daggr import GradioNode, Graph
 
 glm_image = GradioNode(
-    "hf-applications/Z-Image-Turbo"
-    api_name="/generate_image"
+    "hf-applications/Z-Image-Turbo",
+    api_name="/generate_image",
     inputs={
         "prompt": gr.Textbox(label="Prompt"),  # An input node is created for the prompt
         "height": 1024,  # Fixed value (does not appear in the canvas)
@@ -13,21 +14,25 @@ glm_image = GradioNode(
         "seed": random.random,  # Functions are rerun every time the workflow is run (not shown in the canvas)
     },
     outputs={
-        "image": gr.Image(label="Image"),  # Display the generated image in an Image component
+        "image": gr.Image(
+            label="Image"  # Display in an Image component
+        ),
     },
 )
 
 background_remover = GradioNode(
-    "hf-applications/background-removal"
-    api_name="/infer"
+    "hf-applications/background-removal",
+    api_name="/image",
     inputs={
-        "image": glm_image.image,  # Connect the output of the GLM Image node to the input of the background remover node
+        "image": glm_image.image,
     },
     outputs={
-        "image": gr.Image(label="Final Image"),  # Display the final result in an Image component
+        "image": gr.Image(label="Final Image"),
     },
 )
 
-graph = Graph(name="Transparent Background Image Generator", nodes=[glm_image, background_remover])
+graph = Graph(
+    name="Transparent Background Image Generator", nodes=[glm_image, background_remover]
+)
 
 graph.launch()

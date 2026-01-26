@@ -108,6 +108,7 @@ class Node(ABC):
 
 class GradioNode(Node):
     _name_counters: Dict[str, int] = {}
+    _api_cache: Dict[str, dict] = {}
 
     def __init__(
         self,
@@ -116,6 +117,7 @@ class GradioNode(Node):
         name: Optional[str] = None,
         inputs: Optional[Dict[str, Any]] = None,
         outputs: Optional[Dict[str, Any]] = None,
+        validate: bool = True,
     ):
         super().__init__(name)
         self._src = space_or_url
@@ -133,6 +135,65 @@ class GradioNode(Node):
         self._process_inputs(inputs or {})
         self._process_outputs(outputs or {})
         self._validate_ports()
+
+        if validate:
+            self._validate_gradio_api(inputs or {})
+
+    def _get_api_info(self) -> dict:
+        if self._src in GradioNode._api_cache:
+            return GradioNode._api_cache[self._src]
+
+        from gradio_client import Client
+
+        client = Client(self._src, download_files=False)
+        api_info = client.view_api(return_format="dict", print_info=False)
+        GradioNode._api_cache[self._src] = api_info
+        return api_info
+
+    def _validate_gradio_api(self, inputs: Dict[str, Any]) -> None:
+        api_info = self._get_api_info()
+
+        api_name = self._api_name or "/predict"
+        if not api_name.startswith("/"):
+            api_name = "/" + api_name
+
+        named_endpoints = api_info.get("named_endpoints", {})
+        unnamed_endpoints = api_info.get("unnamed_endpoints", {})
+
+        endpoint_info = None
+        if api_name in named_endpoints:
+            endpoint_info = named_endpoints[api_name]
+        else:
+            try:
+                fn_index = int(api_name.lstrip("/"))
+                if fn_index in unnamed_endpoints or str(fn_index) in unnamed_endpoints:
+                    endpoint_info = unnamed_endpoints.get(
+                        fn_index, unnamed_endpoints.get(str(fn_index))
+                    )
+            except ValueError:
+                pass
+
+        if endpoint_info is None:
+            available = list(named_endpoints.keys())
+            if unnamed_endpoints:
+                available.extend([f"/{k}" for k in unnamed_endpoints.keys()])
+            raise ValueError(
+                f"API endpoint '{api_name}' not found in '{self._src}'. "
+                f"Available endpoints: {available}"
+            )
+
+        valid_params = {
+            p.get("parameter_name", p["label"])
+            for p in endpoint_info.get("parameters", [])
+        }
+        input_params = set(inputs.keys())
+        invalid_params = input_params - valid_params
+
+        if invalid_params:
+            raise ValueError(
+                f"Invalid parameter(s) {invalid_params} for endpoint '{api_name}' "
+                f"in '{self._src}'. Valid parameters: {valid_params}"
+            )
 
 
 class InferenceNode(Node):
