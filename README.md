@@ -30,13 +30,16 @@ pip install daggr
 
 ## When to (Not) Use Daggr
 
-Use Daggr when you would like to: programmatically write a repeatable AI workflow that involves Gradio apps
+Use Daggr when:
+* You want to define an AI workflow in Python involving Gradio Spaces, inference providers, or custom functions
+* The workflow is complex enough that inspecting intermediate outputs or rerunning individual steps is useful
+* You need a fixed pipeline that you or others can run with different inputs
 
-**Why not... ComfyUI?**: ComfyUI is a visual node-based interface primarily for Stable Diffusion image generation workflows. daggr takes a Python-first approach where you define workflows in code and the visual canvas is generated automatically—plus it supports any Gradio Space, Hugging Face model, or custom function rather than being limited to image generation pipelines.
+**Why not... ComfyUI?**: ComfyUI is a visual node editor where you build workflows by dragging and connecting nodes. daggr takes a code-first approach: you define workflows in Python and the visual canvas is generated automatically. If you prefer writing code over visual editing, daggr may be a better fit.
 
-**Why not... Airflow?**: Airflow is an enterprise workflow orchestration platform designed for scheduling, monitoring, and managing data pipelines at scale. daggr is built for interactive AI/ML workflows with real-time visual feedback and immediate execution, making it ideal for prototyping, demos, and workflows where you want to inspect intermediate outputs and rerun individual steps on the fly.
+**Why not... Airflow/Prefect?**: Daggr was inspired by Airflow/Prefect, but whereas the focus of these orchestration platforms is scheduling, monitoring, and managing pipelines at scale, daggr is built for interactive AI/ML workflows with real-time visual feedback and immediate execution, making it ideal for prototyping, demos, and workflows where you want to inspect intermediate outputs and rerun individual steps on the fly.
 
-**Why not... Gradio?**: Gradio creates web UIs for individual ML models and demos. daggr extends this by enabling DAG-based workflow composition—you can chain multiple Gradio Spaces, custom Python functions, and inference providers together while automatically generating a visual canvas that displays the entire pipeline with inspectable intermediate outputs at each node.
+**Why not... Gradio?**: Gradio creates web UIs for individual ML models and demos. daggr extends this by enabling DAG-based workflow composition—you can chain multiple Gradio Spaces, custom Python functions, and inference providers together while automatically generating a visual canvas that displays the entire pipeline with inspectable intermediate outputs at each node. 
 
 
 
