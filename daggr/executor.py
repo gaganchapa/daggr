@@ -27,7 +27,9 @@ class SequentialExecutor:
             if isinstance(node, GradioNode):
                 from gradio_client import Client
 
-                self.clients[node_name] = Client(node._src, download_files=False)
+                self.clients[node_name] = Client(
+                    node._src, download_files=False, verbose=False
+                )
         return self.clients.get(node_name)
 
     def _get_scattered_input_edges(self, node_name: str) -> list:
