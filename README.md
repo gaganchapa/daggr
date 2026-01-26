@@ -22,7 +22,11 @@ https://github.com/user-attachments/assets/2cfe49c0-3118-4570-b2bd-f87c333836b5
 pip install daggr
 ```
 
+(requires Python 3.10 or higher).
+
 ## Quick Start
+
+After installing `daggr`, create a new Python file, say `app.py`, and paste this code:
 
 ```python
 import random
@@ -72,6 +76,10 @@ graph = Graph(
 graph.launch()
 ```
 
+Run `python app.py` to start the Python file and you should see a Daggr app like this that you can use to generate images with a transparent background!
+
+
+
 ## When to (Not) Use Daggr
 
 Use Daggr when:
@@ -85,6 +93,9 @@ Use Daggr when:
 
 **Why not... Gradio?** Gradio creates web UIs for individual ML models and demos. While complex workflows can be built in Gradio, they often fail in ways that are hard to debug when using the Gradio app. Daggr tries to provide a transparent, easily-inspectable way to chain multiple Gradio apps, custom Python functions, and inference providers through a visual canvas.
 
+Don't use Daggr when:
+* You need a simple UI for a single model or function - consider using Gradio directly
+* You want a node-based editor for building workflows visually - consider using  ComfyUI instead
 
 ## How It Works
 
