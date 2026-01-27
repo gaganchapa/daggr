@@ -98,7 +98,21 @@
 			const blobUrl = URL.createObjectURL(blob);
 			const link = document.createElement('a');
 			link.href = blobUrl;
-			const ext = blob.type.split('/')[1]?.split(';')[0] || 'webm';
+			
+			let ext = 'wav';
+			try {
+				const urlPath = new URL(src, window.location.origin).pathname;
+				const urlExt = urlPath.split('.').pop()?.toLowerCase();
+				if (urlExt && ['wav', 'mp3', 'webm', 'ogg', 'flac', 'm4a', 'aac'].includes(urlExt)) {
+					ext = urlExt;
+				}
+			} catch {
+				const blobExt = blob.type.split('/')[1]?.split(';')[0];
+				if (blobExt && blobExt !== 'octet-stream') {
+					ext = blobExt;
+				}
+			}
+			
 			link.download = `${label || 'audio'}.${ext}`;
 			document.body.appendChild(link);
 			link.click();

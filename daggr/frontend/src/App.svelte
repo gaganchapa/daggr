@@ -286,10 +286,23 @@
 						const node = data.data.nodes?.find((n: GraphNode) => n.name === nodeName);
 						if (node && node.output_components?.length > 0) {
 							nodeResults[nodeName] = results.map((result: any) => {
-								return node.output_components.map((comp: GradioComponentData) => ({
-									...comp,
-									value: result?.[comp.port_name] ?? comp.value
-								}));
+								return node.output_components.map((comp: GradioComponentData) => {
+									if (result === null || result === undefined) {
+										return { ...comp, value: comp.value };
+									}
+									if (typeof result !== 'object' || Array.isArray(result)) {
+										const expectedKeys = node.output_components.map((c: GradioComponentData) => c.port_name).join(', ');
+										nodeErrors[nodeName] = `Function must return a dict with keys: {${expectedKeys}}. Got ${Array.isArray(result) ? 'list' : typeof result} instead.`;
+										return { ...comp, value: comp.value };
+									}
+									if (!(comp.port_name in result)) {
+										const expectedKeys = node.output_components.map((c: GradioComponentData) => c.port_name).join(', ');
+										const gotKeys = Object.keys(result).join(', ');
+										nodeErrors[nodeName] = `Missing key "${comp.port_name}" in return value. Expected: {${expectedKeys}}, got: {${gotKeys}}`;
+										return { ...comp, value: comp.value };
+									}
+									return { ...comp, value: result[comp.port_name] };
+								});
 							});
 							selectedResultIndex[nodeName] = nodeResults[nodeName].length - 1;
 						}

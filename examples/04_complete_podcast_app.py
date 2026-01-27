@@ -6,7 +6,7 @@ import urllib.request
 import gradio as gr
 from pydub import AudioSegment
 
-from daggr import FnNode, GradioNode, Graph, ItemList
+from daggr import FnNode, GradioNode, Graph
 
 host_voice = GradioNode(
     space_or_url="Qwen/Qwen3-TTS",  # Currently mocked. But this would be a call to e.g. Qwen/Qwen3-TTS
@@ -48,14 +48,12 @@ guest_voice = GradioNode(
 
 def generate_dialogue(topic: str) -> dict:
     time.sleep(1)
-    return {
-        "items": [
-            {"speaker": "Host", "text": "Hello, welcome to the show!"},
-            {"speaker": "Guest", "text": "Thanks for having me!"},
-            {"speaker": "Host", "text": "Today we're discussing " + topic},
-            {"speaker": "Guest", "text": "Yes, it's a fascinating topic!"},
-        ]
-    }
+    return {"items": [
+        {"speaker": "Host", "text": "Hello, welcome to the show!"},
+        {"speaker": "Guest", "text": "Thanks for having me!"},
+        {"speaker": "Host", "text": "Today we're discussing " + topic},
+        {"speaker": "Guest", "text": "Yes, it's a fascinating topic!"},
+    ]}
 
 
 dialogue = FnNode(
@@ -63,16 +61,11 @@ dialogue = FnNode(
     inputs={
         "topic": gr.Textbox(label="Topic", value="AI in healthcare..."),
     },
-    outputs={
-        "items": ItemList(
-            speaker=gr.Dropdown(choices=["Host", "Guest"]),
-            text=gr.Textbox(lines=2),
-        ),
-    },
+    outputs={"items": gr.Dialogue(speakers=["Host", "Guest"])},
 )
 
 
-def chatterbox(text: str, speaker: str, host_audio: str, guest_audio: str) -> str:
+def chatterbox(dialogue: list[dict], host_audio: str, guest_audio: str) -> str:
     voice_map = {"Host": host_audio, "Guest": guest_audio}
     return voice_map.get(speaker, host_audio)
 
@@ -80,8 +73,7 @@ def chatterbox(text: str, speaker: str, host_audio: str, guest_audio: str) -> st
 samples = FnNode(
     fn=chatterbox,
     inputs={
-        "text": dialogue.items.text,
-        "speaker": dialogue.items.speaker,
+        "dialogue": dialogue.items,
         "host_audio": host_voice.audio,
         "guest_audio": guest_voice.audio,
     },
