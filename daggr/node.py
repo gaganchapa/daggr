@@ -113,7 +113,6 @@ class Node(ABC):
 
 class GradioNode(Node):
     _name_counters: dict[str, int] = {}
-    _api_cache: dict[str, dict] = {}
 
     def __init__(
         self,
@@ -156,24 +155,42 @@ class GradioNode(Node):
             )
 
     def _get_api_info(self) -> dict:
-        if self._src in GradioNode._api_cache:
-            return GradioNode._api_cache[self._src]
+        from daggr import _client_cache
+
+        cached = _client_cache.get_api_info(self._src)
+        if cached is not None:
+            return cached
 
         from gradio_client import Client
 
-        client = Client(self._src, download_files=False)
+        client = _client_cache.get_client(self._src)
+        if client is None:
+            client = Client(self._src, download_files=False)
+            _client_cache.set_client(self._src, client)
+
         api_info = client.view_api(return_format="dict", print_info=False)
-        GradioNode._api_cache[self._src] = api_info
+        _client_cache.set_api_info(self._src, api_info)
         return api_info
 
     def _validate_gradio_api(
         self, inputs: dict[str, Any], outputs: dict[str, Any]
     ) -> None:
-        api_info = self._get_api_info()
+        from daggr import _client_cache
 
         api_name = self._api_name or "/predict"
         if not api_name.startswith("/"):
             api_name = "/" + api_name
+
+        cache_key = (
+            self._src,
+            api_name,
+            tuple(sorted(inputs.keys())),
+            tuple(sorted(outputs.keys())) if outputs else (),
+        )
+        if _client_cache.is_validated(cache_key):
+            return
+
+        api_info = self._get_api_info()
 
         named_endpoints = api_info.get("named_endpoints", {})
         unnamed_endpoints = api_info.get("unnamed_endpoints", {})
@@ -251,6 +268,8 @@ class GradioNode(Node):
                     f"endpoint '{api_name}' only returns {num_returns} value(s). "
                     f"Extra outputs will be None."
                 )
+
+        _client_cache.mark_validated(cache_key)
 
 
 class InferenceNode(Node):

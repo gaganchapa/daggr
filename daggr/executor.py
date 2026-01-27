@@ -22,15 +22,24 @@ class SequentialExecutor:
     def _get_client(self, node_name: str):
         from daggr.node import GradioNode
 
-        if node_name not in self.clients:
-            node = self.graph.nodes[node_name]
-            if isinstance(node, GradioNode):
-                from gradio_client import Client
+        node = self.graph.nodes[node_name]
+        if not isinstance(node, GradioNode):
+            return None
 
-                self.clients[node_name] = Client(
-                    node._src, download_files=False, verbose=False
-                )
-        return self.clients.get(node_name)
+        if node_name in self.clients:
+            return self.clients[node_name]
+
+        from daggr import _client_cache
+
+        client = _client_cache.get_client(node._src)
+        if client is None:
+            from gradio_client import Client
+
+            client = Client(node._src, download_files=False, verbose=False)
+            _client_cache.set_client(node._src, client)
+
+        self.clients[node_name] = client
+        return client
 
     def _get_scattered_input_edges(self, node_name: str) -> list:
         scattered = []

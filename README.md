@@ -400,6 +400,62 @@ graph.launch()
 
 This approach lets you run your entire workflow offline, use custom or fine-tuned models, and avoid API rate limits.
 
+## Hot Reload Mode
+
+During development, you can use the `daggr` CLI to run your app with automatic hot reloading. When you make changes to your Python file or its dependencies, the app automatically restarts:
+
+```bash
+daggr examples/01_quickstart.py
+```
+
+This is much faster than manually stopping and restarting your app each time you make a change.
+
+### CLI Options
+
+```bash
+daggr <script> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--host` | Host to bind to (default: `127.0.0.1`) |
+| `--port` | Port to bind to (default: `7860`) |
+| `--no-reload` | Disable auto-reload |
+| `--no-watch-daggr` | Don't watch daggr source for changes |
+
+### What Gets Watched
+
+By default, the CLI watches for changes in:
+
+- **Your script file** and its directory
+- **Local imports** from your script
+- **The daggr source code** itself (useful when developing daggr)
+
+To disable watching the daggr source (e.g., in production-like testing):
+
+```bash
+daggr examples/01_quickstart.py --no-watch-daggr
+```
+
+### API Caching
+
+To speed up reloads, daggr caches Gradio Space API info in `~/.cache/huggingface/daggr/`. This means:
+
+- **First run**: Connects to each Gradio Space to fetch API info (cached to disk)
+- **Subsequent reloads**: Loads from cache, no network calls needed
+
+If you change a Space's API or encounter stale cache issues, clear the cache:
+
+```bash
+rm -rf ~/.cache/huggingface/daggr
+```
+
+### When to Use Hot Reload
+
+Use `daggr <script>` when you're actively developing and want instant feedback on changes.
+
+Use `python <script>` when you want the standard behavior (no file watching, direct execution).
+
 ## Beta Status
 
 > [!WARNING]

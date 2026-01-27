@@ -78,7 +78,7 @@
 		return counts;
 	});
 
-	const NODE_WIDTH = 220;
+	const NODE_WIDTH = 280;
 	const HEADER_HEIGHT = 36;
 	const HEADER_BORDER = 1;
 	const BODY_PADDING_TOP = 8;
@@ -262,7 +262,7 @@
 	function scheduleReconnect() {
 		if (reconnectTimer) return;
 		reconnectAttempts++;
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+		const delay = reconnectAttempts === 1 ? 0 : reconnectAttempts <= 5 ? 50 : Math.min(1000 * Math.pow(2, reconnectAttempts - 5), 30000);
 		console.log(`[daggr] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
 		reconnectTimer = window.setTimeout(() => {
 			reconnectTimer = null;
@@ -1594,11 +1594,14 @@
 		padding-top: 8px;
 		padding-bottom: 8px;
 		min-height: 30px;
+		overflow: hidden;
 	}
 
 	.ports-left, .ports-right {
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
+		max-width: 50%;
 	}
 
 	.ports-right {
@@ -1611,6 +1614,8 @@
 		gap: 6px;
 		height: 22px;
 		padding: 0 10px;
+		min-width: 0;
+		max-width: 100%;
 	}
 
 	.port-dot {
@@ -1635,6 +1640,10 @@
 		font-weight: 500;
 		color: #888;
 		font-family: 'SF Mono', Monaco, monospace;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
 	}
 
 	.node-error {

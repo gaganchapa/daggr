@@ -10,7 +10,7 @@ glm_image = GradioNode(
     inputs={
         "prompt": gr.Textbox(  # An input node is created for the prompt
             label="Prompt",
-            value="A cheetah sprints across the grassy savanna.",
+            value="A cheetah the grassy savanna.",
             lines=3,
         ),
         "height": 1024,  # Fixed value (does not appear in the canvas)
