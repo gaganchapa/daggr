@@ -59,6 +59,7 @@ class ExecutionSession:
     - Isolated results cache
     - Isolated Gradio client cache
     - Per-session concurrency management
+    - Node execution coordination (wait for dependencies)
     """
 
     def __init__(self, graph: Graph, hf_token: str | None = None):
@@ -69,6 +70,9 @@ class ExecutionSession:
         self.selected_variants: dict[str, int] = {}
         self.clients: dict[str, Any] = {}
         self.concurrency = ConcurrencyManager()
+        
+        self._executing_nodes: dict[str, asyncio.Event] = {}
+        self._execution_lock = asyncio.Lock()
 
     def set_hf_token(self, token: str | None):
         """Update the HF token and clear cached clients."""
@@ -80,3 +84,35 @@ class ExecutionSession:
         """Clear cached results for a fresh execution."""
         self.results = {}
         self.scattered_results = {}
+
+    async def wait_for_node(self, node_name: str) -> bool:
+        """Wait for a node to finish executing if it's currently running.
+        
+        Returns True if we waited (node was executing), False otherwise.
+        """
+        async with self._execution_lock:
+            event = self._executing_nodes.get(node_name)
+        
+        if event:
+            await event.wait()
+            return True
+        return False
+
+    async def start_node_execution(self, node_name: str) -> bool:
+        """Mark a node as starting execution.
+        
+        Returns True if we can start (no one else is executing it).
+        Returns False if someone else is already executing it.
+        """
+        async with self._execution_lock:
+            if node_name in self._executing_nodes:
+                return False
+            self._executing_nodes[node_name] = asyncio.Event()
+            return True
+
+    async def finish_node_execution(self, node_name: str):
+        """Mark a node as finished executing and notify waiters."""
+        async with self._execution_lock:
+            event = self._executing_nodes.pop(node_name, None)
+            if event:
+                event.set()

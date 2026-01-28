@@ -309,10 +309,10 @@ def _deploy(
         print(f"  Secrets: {list(secrets.keys())}")
 
     local_imports = find_python_imports(script_path)
-    print(f"\n  Files to upload:")
+    print("\n  Files to upload:")
     print(f"    • app.py (from {script_path.name})")
-    print(f"    • requirements.txt")
-    print(f"    • README.md")
+    print("    • requirements.txt")
+    print("    • README.md")
     for imp in local_imports:
         if imp.is_file():
             print(f"    • {imp.name}")
@@ -412,7 +412,7 @@ This Space was deployed using [daggr](https://github.com/gradio-app/daggr).
                     print(f"  Warning: Could not add secret '{secret_name}': {e}")
 
     print(f"\n  ✓ Deployed to https://huggingface.co/spaces/{repo_id}")
-    print(f"    The Space may take a few minutes to build and start.\n")
+    print("    The Space may take a few minutes to build and start.\n")
 
 
 def _get_gradio_version() -> str:

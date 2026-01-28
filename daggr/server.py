@@ -98,10 +98,14 @@ class DaggrServer:
             return {"success": True}
 
         @self.app.get("/api/sheets")
-        async def list_sheets():
+        async def list_sheets(authorization: str | None = Header(default=None)):
             if not self.graph.persist_key:
                 return {"sheets": [], "user_id": None}
-            hf_user = self._get_hf_user_info()
+            browser_token = self._extract_token_from_header(authorization)
+            if browser_token:
+                hf_user = self._validate_hf_token(browser_token)
+            else:
+                hf_user = self._get_hf_user_info()
             user_id = self.state.get_effective_user_id(hf_user)
             if not user_id:
                 return JSONResponse(
@@ -112,13 +116,17 @@ class DaggrServer:
             return {"sheets": sheets, "user_id": user_id}
 
         @self.app.post("/api/sheets")
-        async def create_sheet(request: Request):
+        async def create_sheet(request: Request, authorization: str | None = Header(default=None)):
             if not self.graph.persist_key:
                 return JSONResponse(
                     {"error": "Persistence is disabled for this graph"},
                     status_code=400,
                 )
-            hf_user = self._get_hf_user_info()
+            browser_token = self._extract_token_from_header(authorization)
+            if browser_token:
+                hf_user = self._validate_hf_token(browser_token)
+            else:
+                hf_user = self._get_hf_user_info()
             user_id = self.state.get_effective_user_id(hf_user)
             if not user_id:
                 return JSONResponse(
@@ -132,8 +140,12 @@ class DaggrServer:
             return {"sheet": sheet}
 
         @self.app.patch("/api/sheets/{sheet_id}")
-        async def rename_sheet(sheet_id: str, request: Request):
-            hf_user = self._get_hf_user_info()
+        async def rename_sheet(sheet_id: str, request: Request, authorization: str | None = Header(default=None)):
+            browser_token = self._extract_token_from_header(authorization)
+            if browser_token:
+                hf_user = self._validate_hf_token(browser_token)
+            else:
+                hf_user = self._get_hf_user_info()
             user_id = self.state.get_effective_user_id(hf_user)
             if not user_id:
                 return JSONResponse({"error": "Login required"}, status_code=401)
@@ -150,8 +162,12 @@ class DaggrServer:
             return {"success": True, "sheet": self.state.get_sheet(sheet_id)}
 
         @self.app.delete("/api/sheets/{sheet_id}")
-        async def delete_sheet(sheet_id: str):
-            hf_user = self._get_hf_user_info()
+        async def delete_sheet(sheet_id: str, authorization: str | None = Header(default=None)):
+            browser_token = self._extract_token_from_header(authorization)
+            if browser_token:
+                hf_user = self._validate_hf_token(browser_token)
+            else:
+                hf_user = self._get_hf_user_info()
             user_id = self.state.get_effective_user_id(hf_user)
             if not user_id:
                 return JSONResponse({"error": "Login required"}, status_code=401)
@@ -164,8 +180,12 @@ class DaggrServer:
             return {"success": True}
 
         @self.app.get("/api/sheets/{sheet_id}/state")
-        async def get_sheet_state(sheet_id: str):
-            hf_user = self._get_hf_user_info()
+        async def get_sheet_state(sheet_id: str, authorization: str | None = Header(default=None)):
+            browser_token = self._extract_token_from_header(authorization)
+            if browser_token:
+                hf_user = self._validate_hf_token(browser_token)
+            else:
+                hf_user = self._get_hf_user_info()
             user_id = self.state.get_effective_user_id(hf_user)
             if not user_id:
                 return JSONResponse({"error": "Login required"}, status_code=401)
@@ -300,7 +320,11 @@ class DaggrServer:
                             node_results = {}
                             for node_name, results_list in persisted_results.items():
                                 if results_list:
-                                    node_results[node_name] = results_list[-1]
+                                    last_entry = results_list[-1]
+                                    if isinstance(last_entry, dict) and "result" in last_entry:
+                                        node_results[node_name] = last_entry["result"]
+                                    else:
+                                        node_results[node_name] = last_entry
 
                             graph_data = self._build_graph_data(
                                 node_results=node_results,
@@ -310,7 +334,7 @@ class DaggrServer:
                             graph_data["sheet_id"] = current_sheet_id
                             graph_data["user_id"] = user_id
                             graph_data["persisted_results"] = (
-                                self._transform_file_paths(persisted_results)
+                                self._transform_persisted_results(persisted_results)
                             )
                             graph_data["transform"] = persisted_transform
 
@@ -675,6 +699,24 @@ class DaggrServer:
         elif isinstance(data, list):
             return [self._transform_file_paths(item) for item in data]
         return data
+
+    def _transform_persisted_results(
+        self, persisted_results: dict[str, list[Any]]
+    ) -> dict[str, list[Any]]:
+        """Transform persisted results, handling both old format (just result)
+        and new format (dict with result and inputs_snapshot)."""
+        transformed: dict[str, list[Any]] = {}
+        for node_name, results_list in persisted_results.items():
+            transformed[node_name] = []
+            for entry in results_list:
+                if isinstance(entry, dict) and "result" in entry:
+                    transformed[node_name].append({
+                        "result": self._transform_file_paths(entry["result"]),
+                        "inputs_snapshot": entry.get("inputs_snapshot"),
+                    })
+                else:
+                    transformed[node_name].append(self._transform_file_paths(entry))
+        return transformed
 
     def _build_input_components(self, node) -> list[dict[str, Any]]:
         if not node._input_components:
@@ -1339,7 +1381,9 @@ class DaggrServer:
                         cached
                     )
 
-        session.results = dict(existing_results)
+        for k, v in existing_results.items():
+            if k not in session.results:
+                session.results[k] = v
 
         node_results = {}
         node_statuses = {}
@@ -1347,6 +1391,11 @@ class DaggrServer:
         for node_name in nodes_to_execute:
             if node_name in existing_results:
                 node_results[node_name] = existing_results[node_name]
+                node_statuses[node_name] = "completed"
+                continue
+
+            if node_name in session.results:
+                node_results[node_name] = session.results[node_name]
                 node_statuses[node_name] = "completed"
                 continue
 
@@ -1418,7 +1467,7 @@ class DaggrServer:
             if user_output is not None:
                 existing_results[node_name] = user_output
                 if can_persist:
-                    self.state.save_result(sheet_id, node_name, user_output)
+                    self.state.save_result(sheet_id, node_name, user_output, input_values)
                 continue
 
             if node_name == target_node:
@@ -1436,7 +1485,9 @@ class DaggrServer:
                         cached
                     )
 
-        session.results = dict(existing_results)
+        for k, v in existing_results.items():
+            if k not in session.results:
+                session.results[k] = v
 
         node_results = {}
         node_statuses = {}
@@ -1453,40 +1504,65 @@ class DaggrServer:
                     node_statuses[node_name] = "completed"
                     continue
 
-                node_statuses[node_name] = "running"
-                user_input = entry_inputs.get(node_name, {})
+                if node_name in session.results:
+                    result = session.results[node_name]
+                    result = self._apply_item_list_edits(
+                        node_name, result, item_list_values
+                    )
+                    node_results[node_name] = result
+                    node_statuses[node_name] = "completed"
+                    continue
 
-                yield {
-                    "type": "node_started",
-                    "started_node": node_name,
-                    "run_id": run_id,
-                }
+                can_execute = await session.start_node_execution(node_name)
+                
+                if not can_execute:
+                    await session.wait_for_node(node_name)
+                    if node_name in session.results:
+                        result = session.results[node_name]
+                        result = self._apply_item_list_edits(
+                            node_name, result, item_list_values
+                        )
+                        node_results[node_name] = result
+                        node_statuses[node_name] = "completed"
+                        continue
 
-                import time
+                try:
+                    node_statuses[node_name] = "running"
+                    user_input = entry_inputs.get(node_name, {})
 
-                start_time = time.time()
-                result = await self.executor.execute_node(
-                    session, node_name, user_input
-                )
-                elapsed_ms = (time.time() - start_time) * 1000
+                    yield {
+                        "type": "node_started",
+                        "started_node": node_name,
+                        "run_id": run_id,
+                    }
 
-                result = self._apply_item_list_edits(
-                    node_name, result, item_list_values
-                )
-                session.results[node_name] = result
-                node_results[node_name] = result
-                node_statuses[node_name] = "completed"
+                    import time
 
-                if can_persist:
-                    self.state.save_result(sheet_id, node_name, result)
+                    start_time = time.time()
+                    result = await self.executor.execute_node(
+                        session, node_name, user_input
+                    )
+                    elapsed_ms = (time.time() - start_time) * 1000
 
-                graph_data = self._build_graph_data(
-                    node_results, node_statuses, input_values, {}, sheet_id
-                )
-                graph_data["type"] = "node_complete"
-                graph_data["completed_node"] = node_name
-                graph_data["run_id"] = run_id
-                graph_data["execution_time_ms"] = elapsed_ms
+                    result = self._apply_item_list_edits(
+                        node_name, result, item_list_values
+                    )
+                    session.results[node_name] = result
+                    node_results[node_name] = result
+                    node_statuses[node_name] = "completed"
+
+                    if can_persist:
+                        self.state.save_result(sheet_id, node_name, result, input_values)
+
+                    graph_data = self._build_graph_data(
+                        node_results, node_statuses, input_values, {}, sheet_id
+                    )
+                    graph_data["type"] = "node_complete"
+                    graph_data["completed_node"] = node_name
+                    graph_data["run_id"] = run_id
+                    graph_data["execution_time_ms"] = elapsed_ms
+                finally:
+                    await session.finish_node_execution(node_name)
                 yield graph_data
 
         except Exception as e:

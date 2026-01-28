@@ -80,10 +80,16 @@ class SessionState:
                 sheet_id TEXT,
                 node_name TEXT,
                 result TEXT,
+                inputs_snapshot TEXT,
                 created_at TEXT,
                 FOREIGN KEY (sheet_id) REFERENCES sheets(sheet_id) ON DELETE CASCADE
             )
         """)
+
+        cursor.execute("PRAGMA table_info(node_results)")
+        result_columns = [col[1] for col in cursor.fetchall()]
+        if "inputs_snapshot" not in result_columns:
+            cursor.execute("ALTER TABLE node_results ADD COLUMN inputs_snapshot TEXT")
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_node_results_sheet_node 
@@ -335,14 +341,21 @@ class SessionState:
             inputs[node_name][port_name] = json.loads(value_json)
         return inputs
 
-    def save_result(self, sheet_id: str, node_name: str, result: Any):
+    def save_result(
+        self,
+        sheet_id: str,
+        node_name: str,
+        result: Any,
+        inputs_snapshot: dict[str, Any] | None = None,
+    ):
         now = datetime.now().isoformat()
         result_json = json.dumps(result, default=str)
+        inputs_json = json.dumps(inputs_snapshot, default=str) if inputs_snapshot else None
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO node_results (sheet_id, node_name, result, created_at) VALUES (?, ?, ?, ?)",
-            (sheet_id, node_name, result_json, now),
+            "INSERT INTO node_results (sheet_id, node_name, result, inputs_snapshot, created_at) VALUES (?, ?, ?, ?, ?)",
+            (sheet_id, node_name, result_json, inputs_json, now),
         )
         cursor.execute(
             "UPDATE sheets SET updated_at = ? WHERE sheet_id = ?",
@@ -389,7 +402,7 @@ class SessionState:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
-            """SELECT node_name, result FROM node_results 
+            """SELECT node_name, result, inputs_snapshot FROM node_results 
                WHERE sheet_id = ? 
                ORDER BY created_at ASC""",
             (sheet_id,),
@@ -397,10 +410,14 @@ class SessionState:
         results = cursor.fetchall()
         conn.close()
         all_results: dict[str, list[Any]] = {}
-        for node_name, result_json in results:
+        for node_name, result_json, inputs_json in results:
             if node_name not in all_results:
                 all_results[node_name] = []
-            all_results[node_name].append(json.loads(result_json))
+            result_data = {
+                "result": json.loads(result_json),
+                "inputs_snapshot": json.loads(inputs_json) if inputs_json else None,
+            }
+            all_results[node_name].append(result_data)
         return all_results
 
     def get_sheet_state(self, sheet_id: str) -> dict[str, Any]:

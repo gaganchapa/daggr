@@ -28,6 +28,7 @@
 	let pendingRunIds = $state<Record<string, string[]>>({});
 	let runIdToNodes = $state<Record<string, string[]>>({});
 	let nodeResults = $state<Record<string, any[]>>({});
+	let nodeInputsSnapshots = $state<Record<string, (Record<string, any> | null)[]>>({});
 	let selectedResultIndex = $state<Record<string, number>>({});
 	let itemListValues = $state<Record<string, Record<number, Record<string, any>>>>({});
 	let selectedVariants = $state<Record<string, number>>({});
@@ -164,8 +165,18 @@
 				showLoginTooltip = false;
 				tokenInputValue = '';
 				await fetchUserInfo();
+				await fetchSheets();
+				
+				if (sheets.length > 0) {
+					currentSheetId = sheets[0].sheet_id;
+				} else if (canPersist) {
+					await createSheet('Sheet 1');
+				}
+				
 				if (ws && wsConnected) {
-					ws.send(JSON.stringify({ action: 'get_graph', sheet_id: currentSheetId, hf_token: getStoredToken() }));
+					const token = getStoredToken();
+					ws.send(JSON.stringify({ action: 'set_sheet', sheet_id: currentSheetId, hf_token: token }));
+					ws.send(JSON.stringify({ action: 'get_graph', sheet_id: currentSheetId, hf_token: token }));
 				}
 			} else {
 				loginError = data.error || 'Invalid token';
@@ -177,20 +188,33 @@
 		}
 	}
 
-	function handleLogout() {
+	async function handleLogout() {
 		clearStoredToken();
 		hfUser = null;
-		canPersist = false;
-		fetchUserInfo();
+		await fetchUserInfo();
+		await fetchSheets();
+		
+		if (sheets.length > 0) {
+			currentSheetId = sheets[0].sheet_id;
+		} else {
+			currentSheetId = null;
+		}
+		
 		if (ws && wsConnected) {
-			ws.send(JSON.stringify({ action: 'get_graph', hf_token: null }));
+			ws.send(JSON.stringify({ action: 'set_sheet', sheet_id: currentSheetId, hf_token: null }));
+			ws.send(JSON.stringify({ action: 'get_graph', sheet_id: currentSheetId, hf_token: null }));
 		}
 	}
 
 	async function fetchSheets() {
 		if (!canPersist) return;
 		try {
-			const response = await fetch('/api/sheets');
+			const token = getStoredToken();
+			const headers: Record<string, string> = {};
+			if (token) {
+				headers['Authorization'] = `Bearer ${token}`;
+			}
+			const response = await fetch('/api/sheets', { headers });
 			if (response.ok) {
 				const data = await response.json();
 				sheets = data.sheets || [];
@@ -203,9 +227,14 @@
 	async function createSheet(name?: string) {
 		if (!canPersist) return;
 		try {
+			const token = getStoredToken();
+			const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+			if (token) {
+				headers['Authorization'] = `Bearer ${token}`;
+			}
 			const response = await fetch('/api/sheets', {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers,
 				body: JSON.stringify({ name })
 			});
 			if (response.ok) {
@@ -221,9 +250,14 @@
 
 	async function renameSheet(sheetId: string, newName: string) {
 		try {
+			const token = getStoredToken();
+			const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+			if (token) {
+				headers['Authorization'] = `Bearer ${token}`;
+			}
 			const response = await fetch(`/api/sheets/${sheetId}`, {
 				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
+				headers,
 				body: JSON.stringify({ name: newName })
 			});
 			if (response.ok) {
@@ -237,7 +271,12 @@
 	async function deleteSheet(sheetId: string) {
 		if (!confirm('Delete this sheet and all its data?')) return;
 		try {
-			const response = await fetch(`/api/sheets/${sheetId}`, { method: 'DELETE' });
+			const token = getStoredToken();
+			const headers: Record<string, string> = {};
+			if (token) {
+				headers['Authorization'] = `Bearer ${token}`;
+			}
+			const response = await fetch(`/api/sheets/${sheetId}`, { method: 'DELETE', headers });
 			if (response.ok) {
 				sheets = sheets.filter(s => s.sheet_id !== sheetId);
 				if (currentSheetId === sheetId) {
@@ -367,7 +406,12 @@
 					if (results && results.length > 0) {
 						const node = data.data.nodes?.find((n: GraphNode) => n.name === nodeName);
 						if (node && node.output_components?.length > 0) {
-							nodeResults[nodeName] = results.map((result: any) => {
+							const snapshots: (Record<string, any> | null)[] = [];
+							nodeResults[nodeName] = results.map((entry: any) => {
+								const result = entry?.result !== undefined ? entry.result : entry;
+								const inputsSnapshot = entry?.inputs_snapshot || null;
+								snapshots.push(inputsSnapshot);
+								
 								return node.output_components.map((comp: GradioComponentData) => {
 									if (result === null || result === undefined) {
 										return { ...comp, value: comp.value };
@@ -386,6 +430,7 @@
 									return { ...comp, value: result[comp.port_name] };
 								});
 							});
+							nodeInputsSnapshots[nodeName] = snapshots;
 							selectedResultIndex[nodeName] = nodeResults[nodeName].length - 1;
 						}
 					}
@@ -480,8 +525,12 @@
 							if (!nodeResults[completedNode]) {
 								nodeResults[completedNode] = [];
 							}
+							if (!nodeInputsSnapshots[completedNode]) {
+								nodeInputsSnapshots[completedNode] = [];
+							}
 							const resultSnapshot = node.output_components.map((c: GradioComponentData) => ({ ...c }));
 							nodeResults[completedNode] = [...nodeResults[completedNode], resultSnapshot];
+							nodeInputsSnapshots[completedNode] = [...nodeInputsSnapshots[completedNode], data.inputs ? { ...data.inputs } : null];
 							selectedResultIndex[completedNode] = nodeResults[completedNode].length - 1;
 
 							if (isOnSpaces && !hfUser && !hasShownPersistencePrompt) {
@@ -943,11 +992,24 @@
 		return nodeResults[nodeName]?.length || 0;
 	}
 
+	function restoreInputsSnapshot(nodeName: string, index: number) {
+		const snapshots = nodeInputsSnapshots[nodeName];
+		if (!snapshots || !snapshots[index]) return;
+		
+		const snapshot = snapshots[index];
+		for (const [inputNodeId, nodeInputs] of Object.entries(snapshot)) {
+			if (typeof nodeInputs === 'object' && nodeInputs !== null) {
+				inputValues[inputNodeId] = { ...inputValues[inputNodeId], ...nodeInputs };
+			}
+		}
+	}
+
 	function prevResult(e: MouseEvent, nodeName: string) {
 		e.stopPropagation();
 		const current = selectedResultIndex[nodeName] ?? 0;
 		if (current > 0) {
 			selectedResultIndex[nodeName] = current - 1;
+			restoreInputsSnapshot(nodeName, current - 1);
 		}
 	}
 
@@ -957,6 +1019,7 @@
 		const current = selectedResultIndex[nodeName] ?? 0;
 		if (current < total - 1) {
 			selectedResultIndex[nodeName] = current + 1;
+			restoreInputsSnapshot(nodeName, current + 1);
 		}
 	}
 
