@@ -102,4 +102,3 @@ class TestWorkflowAPI:
         outputs = call_response.json()["outputs"]
         assert "subtractor" in outputs
         assert outputs["subtractor"]["result"] == 40  # ((10 + 5) * 3) - 5 = 40
-

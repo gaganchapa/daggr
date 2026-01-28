@@ -1477,7 +1477,9 @@ class DaggrServer:
             if node._input_components:
                 node_inputs = {}
                 for port_name in node._input_components:
-                    input_node_id = f"{node_name}__{port_name}".replace(" ", "_").replace("-", "_")
+                    input_node_id = f"{node_name}__{port_name}".replace(
+                        " ", "_"
+                    ).replace("-", "_")
                     if input_node_id in input_values:
                         node_inputs[port_name] = input_values[input_node_id]
                 if node_inputs:

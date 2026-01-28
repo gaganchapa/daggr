@@ -299,29 +299,37 @@ class Graph:
                 if node._input_components:
                     for port_name, comp in node._input_components.items():
                         comp_type = self._get_component_type(comp)
-                        inputs.append({
-                            "node": node_name,
-                            "port": port_name,
-                            "type": comp_type,
-                            "id": f"{node_name}__{port_name}".replace(" ", "_").replace("-", "_"),
-                        })
+                        inputs.append(
+                            {
+                                "node": node_name,
+                                "port": port_name,
+                                "type": comp_type,
+                                "id": f"{node_name}__{port_name}".replace(
+                                    " ", "_"
+                                ).replace("-", "_"),
+                            }
+                        )
 
                 if node_name in output_nodes and node._output_components:
                     for port_name, comp in node._output_components.items():
                         if comp is None:
                             continue
                         comp_type = self._get_component_type(comp)
-                        outputs.append({
-                            "node": node_name,
-                            "port": port_name,
-                            "type": comp_type,
-                        })
+                        outputs.append(
+                            {
+                                "node": node_name,
+                                "port": port_name,
+                                "type": comp_type,
+                            }
+                        )
 
-            result["subgraphs"].append({
-                "id": subgraph_id,
-                "inputs": inputs,
-                "outputs": outputs,
-            })
+            result["subgraphs"].append(
+                {
+                    "id": subgraph_id,
+                    "inputs": inputs,
+                    "outputs": outputs,
+                }
+            )
 
         return result
 

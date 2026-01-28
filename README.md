@@ -250,88 +250,6 @@ result = tts.test()  # Uses gr.Textbox().example_value(), etc.
 
 This is useful for quickly checking what format a node returns without wiring up a full workflow.
 
-### API Access
-
-Daggr workflows can be called programmatically via REST API, making it easy to integrate workflows into other applications or run automated tests.
-
-#### Discovering the API Schema
-
-First, get the API schema to see available inputs and outputs:
-
-```bash
-curl http://localhost:7860/api/schema
-```
-
-Response:
-```json
-{
-  "subgraphs": [
-    {
-      "id": "main",
-      "inputs": [
-        {"node": "image_gen", "port": "prompt", "type": "textbox", "id": "image_gen__prompt"}
-      ],
-      "outputs": [
-        {"node": "background_remover", "port": "image", "type": "image"}
-      ]
-    }
-  ]
-}
-```
-
-#### Calling the Workflow
-
-Execute the entire workflow by POSTing inputs to `/api/call`:
-
-```bash
-curl -X POST http://localhost:7860/api/call \
-  -H "Content-Type: application/json" \
-  -d '{"inputs": {"image_gen__prompt": "A mountain landscape"}}'
-```
-
-Response:
-```json
-{
-  "outputs": {
-    "background_remover": {
-      "image": "/file/path/to/output.png"
-    }
-  }
-}
-```
-
-Input keys follow the format `{node_name}__{port_name}` (with spaces/dashes replaced by underscores).
-
-#### Disconnected Subgraphs
-
-If your workflow has multiple disconnected subgraphs, use `/api/call/{subgraph_id}`:
-
-```bash
-# List available subgraphs
-curl http://localhost:7860/api/schema
-
-# Call a specific subgraph
-curl -X POST http://localhost:7860/api/call/subgraph_0 \
-  -H "Content-Type: application/json" \
-  -d '{"inputs": {...}}'
-```
-
-#### Python Example
-
-```python
-import requests
-
-# Get schema
-schema = requests.get("http://localhost:7860/api/schema").json()
-
-# Execute workflow
-response = requests.post(
-    "http://localhost:7860/api/call",
-    json={"inputs": {"my_node__text": "Hello world"}}
-)
-outputs = response.json()["outputs"]
-```
-
 ### Input Types
 
 Each node's `inputs` dict accepts four types of values:
@@ -745,6 +663,90 @@ graph.launch()
 
 This approach lets you run your entire workflow offline, use custom or fine-tuned models, and avoid API rate limits.
 
+
+### API Access
+
+Daggr workflows can be called programmatically via REST API, making it easy to integrate workflows into other applications or run automated tests.
+
+#### Discovering the API Schema
+
+First, get the API schema to see available inputs and outputs:
+
+```bash
+curl http://localhost:7860/api/schema
+```
+
+Response:
+```json
+{
+  "subgraphs": [
+    {
+      "id": "main",
+      "inputs": [
+        {"node": "image_gen", "port": "prompt", "type": "textbox", "id": "image_gen__prompt"}
+      ],
+      "outputs": [
+        {"node": "background_remover", "port": "image", "type": "image"}
+      ]
+    }
+  ]
+}
+```
+
+#### Calling the Workflow
+
+Execute the entire workflow by POSTing inputs to `/api/call`:
+
+```bash
+curl -X POST http://localhost:7860/api/call \
+  -H "Content-Type: application/json" \
+  -d '{"inputs": {"image_gen__prompt": "A mountain landscape"}}'
+```
+
+Response:
+```json
+{
+  "outputs": {
+    "background_remover": {
+      "image": "/file/path/to/output.png"
+    }
+  }
+}
+```
+
+Input keys follow the format `{node_name}__{port_name}` (with spaces/dashes replaced by underscores).
+
+#### Disconnected Subgraphs
+
+If your workflow has multiple disconnected subgraphs, use `/api/call/{subgraph_id}`:
+
+```bash
+# List available subgraphs
+curl http://localhost:7860/api/schema
+
+# Call a specific subgraph
+curl -X POST http://localhost:7860/api/call/subgraph_0 \
+  -H "Content-Type: application/json" \
+  -d '{"inputs": {...}}'
+```
+
+#### Python Example
+
+```python
+import requests
+
+# Get schema
+schema = requests.get("http://localhost:7860/api/schema").json()
+
+# Execute workflow
+response = requests.post(
+    "http://localhost:7860/api/call",
+    json={"inputs": {"my_node__text": "Hello world"}}
+)
+outputs = response.json()["outputs"]
+```
+
+
 ## Hot Reload Mode
 
 During development, you can use the `daggr` CLI to run your app with automatic hot reloading. When you make changes to your Python file or its dependencies, the app automatically restarts:
@@ -800,6 +802,7 @@ rm -rf ~/.cache/huggingface/daggr
 Use `daggr <script>` when you're actively developing and want instant feedback on changes.
 
 Use `python <script>` when you want the standard behavior (no file watching, direct execution).
+
 
 ## Beta Status
 
