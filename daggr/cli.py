@@ -154,7 +154,7 @@ def _reset_cache(script_path: Path):
 
     persist_key = captured_graph.persist_key
     if not persist_key:
-        print(f"Error: Graph has no persist_key (persistence is disabled)")
+        print("Error: Graph has no persist_key (persistence is disabled)")
         sys.exit(1)
 
     cache_dir = get_daggr_cache_dir()

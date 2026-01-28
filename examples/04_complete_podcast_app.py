@@ -66,8 +66,7 @@ dialogue = FnNode(
 
 
 def chatterbox(dialogue: list[dict], host_audio: str, guest_audio: str) -> str:
-    voice_map = {"Host": host_audio, "Guest": guest_audio}
-    return voice_map.get(speaker, host_audio)
+    return
 
 
 samples = FnNode(
