@@ -38,6 +38,57 @@ def _download_file(url: str) -> str:
     return str(local_path)
 
 
+def _postprocess_inference_result(task: str | None, result: Any) -> Any:
+    """Unwrap HF Inference Client result objects to get the actual data."""
+    import uuid
+
+    from daggr.state import get_daggr_files_dir
+
+    if result is None:
+        return None
+
+    # Many tasks return special output objects that need unwrapping
+    if task == "automatic-speech-recognition":
+        # Returns AutomaticSpeechRecognitionOutput with .text attribute
+        return getattr(result, "text", result)
+    elif task == "translation":
+        # Returns TranslationOutput with .translation_text attribute
+        return getattr(result, "translation_text", result)
+    elif task == "summarization":
+        # Returns SummarizationOutput with .summary_text attribute
+        return getattr(result, "summary_text", result)
+    elif task in ("audio-classification", "image-classification", "text-classification"):
+        # Returns list of ClassificationOutput objects with .label and .score
+        if isinstance(result, list) and result:
+            # Return as dict suitable for gr.Label
+            return {item.label: item.score for item in result if hasattr(item, "label")}
+        return result
+    elif task == "image-to-text":
+        # Returns ImageToTextOutput with .generated_text attribute
+        return getattr(result, "generated_text", result)
+    elif task == "question-answering":
+        # Returns QuestionAnsweringOutput with .answer and .score
+        if hasattr(result, "answer"):
+            return result.answer
+        return result
+    elif task in ("text-to-speech", "text-to-audio"):
+        # Returns raw bytes - save to file
+        if isinstance(result, bytes):
+            file_path = get_daggr_files_dir() / f"{uuid.uuid4()}.wav"
+            file_path.write_bytes(result)
+            return str(file_path)
+        return result
+    elif task == "text-to-image":
+        # Returns PIL Image - save to file
+        if hasattr(result, "save"):  # PIL Image
+            file_path = get_daggr_files_dir() / f"{uuid.uuid4()}.png"
+            result.save(file_path)
+            return str(file_path)
+        return result
+
+    return result
+
+
 def _call_inference_task(client: Any, task: str | None, inputs: dict[str, Any]) -> Any:
     first_input = next(iter(inputs.values()), None) if inputs else None
     if first_input is None:
@@ -78,16 +129,17 @@ def _call_inference_task(client: Any, task: str | None, inputs: dict[str, Any]) 
     method = getattr(client, method_name, None)
 
     if method is None:
-        return client.text_generation(first_input)
-
-    if task in ("image-to-image",):
+        result = client.text_generation(first_input)
+    elif task in ("image-to-image",):
         prompt = inputs.get("prompt", "")
-        return method(first_input, prompt=prompt)
+        result = method(first_input, prompt=prompt)
     elif task in ("visual-question-answering", "document-question-answering"):
         question = inputs.get("question", inputs.get("prompt", ""))
-        return method(first_input, question=question)
+        result = method(first_input, question=question)
     else:
-        return method(first_input)
+        result = method(first_input)
+
+    return _postprocess_inference_result(task, result)
 
 
 class SequentialExecutor:
@@ -274,11 +326,15 @@ class SequentialExecutor:
 
             if not node._task_fetched:
                 node._fetch_model_info()
-            client = InferenceClient(model=node._model)
+            client = InferenceClient(
+                model=node._model_name_for_hub,
+                provider=node._provider,
+            )
             inference_inputs = {
                 k: v for k, v in all_inputs.items() if k in node._input_ports
             }
-            result = _call_inference_task(client, node._task, inference_inputs)
+            raw_result = _call_inference_task(client, node._task, inference_inputs)
+            result = self._map_inference_result(node, raw_result)
 
         elif isinstance(node, InteractionNode):
             result = all_inputs.get(
@@ -343,11 +399,15 @@ class SequentialExecutor:
 
             if not variant._task_fetched:
                 variant._fetch_model_info()
-            client = InferenceClient(model=variant._model)
+            client = InferenceClient(
+                model=variant._model_name_for_hub,
+                provider=variant._provider,
+            )
             inference_inputs = {
                 k: v for k, v in all_inputs.items() if k in variant._input_ports
             }
-            result = _call_inference_task(client, variant._task, inference_inputs)
+            raw_result = _call_inference_task(client, variant._task, inference_inputs)
+            result = self._map_inference_result(variant, raw_result)
 
         else:
             result = None
@@ -420,6 +480,18 @@ class SequentialExecutor:
             return result
         else:
             return {output_ports[0]: raw_result}
+
+    def _map_inference_result(self, node, raw_result: Any) -> dict[str, Any]:
+        """Map inference API result to output ports."""
+        if raw_result is None:
+            return {}
+
+        output_ports = node._output_ports
+        if not output_ports:
+            return {"output": raw_result}
+
+        # Inference APIs typically return a single value
+        return {output_ports[0]: raw_result}
 
     def execute_node(
         self, node_name: str, user_inputs: dict[str, Any] | None = None

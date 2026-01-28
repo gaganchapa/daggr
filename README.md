@@ -232,6 +232,24 @@ llm = InferenceNode(
 
 **Outputs:** Like other nodes, output names are arbitrary and map to return values in order.
 
+### Testing Nodes
+
+You can test-run any node in isolation using the `.test()` method:
+
+```python
+tts = GradioNode("mrfakename/MeloTTS", api_name="/synthesize", ...)
+result = tts.test(text="Hello world", speaker="EN-US")
+# Returns: {"audio": "/path/to/audio.wav"}
+```
+
+If called without arguments, `.test()` auto-generates example values using each input component's `.example_value()` method:
+
+```python
+result = tts.test()  # Uses gr.Textbox().example_value(), etc.
+```
+
+This is useful for quickly checking what format a node returns without wiring up a full workflow.
+
 ### Input Types
 
 Each node's `inputs` dict accepts four types of values:
@@ -526,6 +544,35 @@ Please check the model name is correct (format: 'username/model-name').
 ```
 
 These errors make it easy for LLMs to understand what went wrong and fix the generated code automatically, enabling a smoother AI-assisted development experience.
+
+### Discovering Output Formats
+
+When building workflows, LLMs can use `.test()` to discover a node's actual output format:
+
+```python
+# LLM wants to understand what whisper returns
+whisper = InferenceNode("openai/whisper-large-v3", inputs={"audio": gr.Audio()})
+result = whisper.test(audio="sample.wav")
+# Returns: {"text": "Hello, how are you?"}
+```
+
+This helps LLMs:
+- Understand the structure of node outputs
+- Apply `postprocess` functions to extract specific values
+- Create intermediate `FnNode`s to transform data between nodes
+
+For example, if a node returns multiple values but you only need one:
+
+```python
+# After discovering the output format with .test()
+bg_remover = GradioNode(
+    "hf-applications/background-removal",
+    api_name="/image",
+    inputs={"image": some_image.output},
+    postprocess=lambda original, final: final,  # Keep only the second output
+    outputs={"image": gr.Image()},
+)
+```
 
 ## Running Locally
 

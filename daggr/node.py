@@ -137,6 +137,64 @@ class Node(ABC):
             if component is not None and _is_gradio_component(component):
                 self._output_components[port_name] = component
 
+    def test(self, **inputs) -> dict[str, Any]:
+        """Test-run this node in isolation and return the raw result.
+
+        If no inputs are provided, auto-generates example values using:
+        - Gradio component's .example_value() method
+        - Port's associated output component's .example_value()
+        - Callable inputs are called
+        - Fixed values are used directly
+
+        Args:
+            **inputs: Override inputs for the test run.
+
+        Returns:
+            Dict mapping output port names to their values.
+
+        Example:
+            >>> tts = GradioNode("mrfakename/MeloTTS", api_name="/synthesize", ...)
+            >>> result = tts.test(text="Hello world", speaker="EN-US")
+            >>> # Returns: {"audio": "/path/to/audio.wav"}
+            >>>
+            >>> # Or with auto-generated example values:
+            >>> result = tts.test()
+        """
+        from daggr import Graph
+        from daggr.executor import SequentialExecutor
+
+        if not inputs:
+            inputs = self._generate_example_inputs()
+
+        graph = Graph("_test", nodes=[self], persist=False)
+        executor = SequentialExecutor(graph)
+        return executor.execute_node(self._name, inputs)
+
+    def _generate_example_inputs(self) -> dict[str, Any]:
+        """Generate example values for all input ports."""
+        examples = {}
+
+        # From input components (Gradio components)
+        for port_name, comp in self._input_components.items():
+            if hasattr(comp, "example_value"):
+                examples[port_name] = comp.example_value()
+
+        # From fixed inputs (constants, callables, or port connections)
+        for port_name, source in self._fixed_inputs.items():
+            if callable(source):
+                examples[port_name] = source()
+            else:
+                examples[port_name] = source
+
+        # From port connections (use the connected port's output component)
+        for port_name, port in self._port_connections.items():
+            if is_port(port):
+                comp = port._node._output_components.get(port._port_name)
+                if comp and hasattr(comp, "example_value"):
+                    examples[port_name] = comp.example_value()
+
+        return examples
+
     def __repr__(self):
         return f"{self.__class__.__name__}(name={self._name})"
 
@@ -438,7 +496,8 @@ class InferenceNode(Node):
         self._task_fetched: bool = False
 
         if not self._name:
-            self._name = self._model.split("/")[-1]
+            # Strip provider tag (e.g., ":replicate") for display name
+            self._name = self._model_name_for_hub.split("/")[-1]
 
         if inputs:
             self._process_inputs(inputs)
@@ -455,17 +514,33 @@ class InferenceNode(Node):
         if validate:
             self._fetch_model_info()
 
+    @property
+    def _model_name_for_hub(self) -> str:
+        """Return the model name without provider tags (e.g., ':replicate')."""
+        # HF Inference Client allows tags like "model:provider" for routing
+        # Strip these for Hub API calls and display
+        return self._model.split(":")[0]
+
+    @property
+    def _provider(self) -> str | None:
+        """Return the provider tag if specified (e.g., 'replicate' from 'model:replicate')."""
+        parts = self._model.split(":")
+        return parts[1] if len(parts) > 1 else None
+
     def _fetch_model_info(self) -> None:
         if self._task_fetched:
             return
 
         from daggr import _client_cache
 
-        found_in_cache, cached = _client_cache.get_model_task(self._model)
+        # Use model name without provider tag for Hub lookups
+        hub_model = self._model_name_for_hub
+
+        found_in_cache, cached = _client_cache.get_model_task(hub_model)
         if found_in_cache:
             if cached == "__NOT_FOUND__":
                 raise ValueError(
-                    f"Model '{self._model}' not found on Hugging Face Hub."
+                    f"Model '{hub_model}' not found on Hugging Face Hub."
                 )
             self._task = cached
             self._task_fetched = True
@@ -475,14 +550,14 @@ class InferenceNode(Node):
         from huggingface_hub.utils import RepositoryNotFoundError
 
         try:
-            info = model_info(self._model)
+            info = model_info(hub_model)
             self._task = info.pipeline_tag
-            _client_cache.set_model_task(self._model, self._task)
+            _client_cache.set_model_task(hub_model, self._task)
             self._task_fetched = True
         except RepositoryNotFoundError:
-            _client_cache.set_model_not_found(self._model)
+            _client_cache.set_model_not_found(hub_model)
             raise ValueError(
-                f"Model '{self._model}' not found on Hugging Face Hub. "
+                f"Model '{hub_model}' not found on Hugging Face Hub. "
                 f"Please check the model name is correct (format: 'username/model-name')."
             )
 
