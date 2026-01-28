@@ -410,7 +410,8 @@ class InferenceNode(Node):
     """A node that wraps a Hugging Face Inference API model.
 
     InferenceNode uses the Hugging Face Inference API to run models without
-    needing to download them locally.
+    needing to download them locally. The task type (text-generation, text-to-image,
+    etc.) is automatically determined from the model's pipeline_tag on the Hub.
 
     Args:
         model: The Hugging Face model ID (e.g., "meta-llama/Llama-2-7b-chat-hf").
@@ -423,8 +424,6 @@ class InferenceNode(Node):
         >>> llm = InferenceNode("meta-llama/Llama-2-7b-chat-hf")
     """
 
-    _model_cache: dict[str, bool] = {}
-
     def __init__(
         self,
         model: str,
@@ -435,6 +434,8 @@ class InferenceNode(Node):
     ):
         super().__init__(name)
         self._model = model
+        self._task: str | None = None
+        self._task_fetched: bool = False
 
         if not self._name:
             self._name = self._model.split("/")[-1]
@@ -452,24 +453,34 @@ class InferenceNode(Node):
         self._validate_ports()
 
         if validate:
-            self._validate_model_exists()
+            self._fetch_model_info()
 
-    def _validate_model_exists(self) -> None:
-        if self._model in InferenceNode._model_cache:
-            if not InferenceNode._model_cache[self._model]:
+    def _fetch_model_info(self) -> None:
+        if self._task_fetched:
+            return
+
+        from daggr import _client_cache
+
+        found_in_cache, cached = _client_cache.get_model_task(self._model)
+        if found_in_cache:
+            if cached == "__NOT_FOUND__":
                 raise ValueError(
                     f"Model '{self._model}' not found on Hugging Face Hub."
                 )
+            self._task = cached
+            self._task_fetched = True
             return
 
         from huggingface_hub import model_info
         from huggingface_hub.utils import RepositoryNotFoundError
 
         try:
-            model_info(self._model)
-            InferenceNode._model_cache[self._model] = True
+            info = model_info(self._model)
+            self._task = info.pipeline_tag
+            _client_cache.set_model_task(self._model, self._task)
+            self._task_fetched = True
         except RepositoryNotFoundError:
-            InferenceNode._model_cache[self._model] = False
+            _client_cache.set_model_not_found(self._model)
             raise ValueError(
                 f"Model '{self._model}' not found on Hugging Face Hub. "
                 f"Please check the model name is correct (format: 'username/model-name')."

@@ -38,6 +38,56 @@ def _download_file(url: str) -> str:
     return str(local_path)
 
 
+def _call_inference_task(client: Any, task: str | None, inputs: dict[str, Any]) -> Any:
+    first_input = next(iter(inputs.values()), None) if inputs else None
+    if first_input is None:
+        return None
+
+    task_method_map = {
+        "text-generation": "text_generation",
+        "text2text-generation": "text_generation",
+        "text-to-image": "text_to_image",
+        "image-to-image": "image_to_image",
+        "image-to-text": "image_to_text",
+        "image-to-video": "image_to_video",
+        "text-to-video": "text_to_video",
+        "text-to-speech": "text_to_speech",
+        "text-to-audio": "text_to_audio",
+        "automatic-speech-recognition": "automatic_speech_recognition",
+        "audio-to-audio": "audio_to_audio",
+        "audio-classification": "audio_classification",
+        "image-classification": "image_classification",
+        "object-detection": "object_detection",
+        "image-segmentation": "image_segmentation",
+        "translation": "translation",
+        "summarization": "summarization",
+        "feature-extraction": "feature_extraction",
+        "fill-mask": "fill_mask",
+        "question-answering": "question_answering",
+        "table-question-answering": "table_question_answering",
+        "sentence-similarity": "sentence_similarity",
+        "zero-shot-classification": "zero_shot_classification",
+        "zero-shot-image-classification": "zero_shot_image_classification",
+        "document-question-answering": "document_question_answering",
+        "visual-question-answering": "visual_question_answering",
+    }
+
+    method_name = task_method_map.get(task, "text_generation") if task else "text_generation"
+    method = getattr(client, method_name, None)
+
+    if method is None:
+        return client.text_generation(first_input)
+
+    if task in ("image-to-image",):
+        prompt = inputs.get("prompt", "")
+        return method(first_input, prompt=prompt)
+    elif task in ("visual-question-answering", "document-question-answering"):
+        question = inputs.get("question", inputs.get("prompt", ""))
+        return method(first_input, question=question)
+    else:
+        return method(first_input)
+
+
 class SequentialExecutor:
     def __init__(self, graph: Graph):
         self.graph = graph
@@ -220,12 +270,13 @@ class SequentialExecutor:
         elif isinstance(node, InferenceNode):
             from huggingface_hub import InferenceClient
 
+            if not node._task_fetched:
+                node._fetch_model_info()
             client = InferenceClient(model=node._model)
-            input_value = all_inputs.get(
-                "input",
-                all_inputs.get(node._input_ports[0]) if node._input_ports else None,
-            )
-            result = client.text_generation(input_value) if input_value else None
+            inference_inputs = {
+                k: v for k, v in all_inputs.items() if k in node._input_ports
+            }
+            result = _call_inference_task(client, node._task, inference_inputs)
 
         elif isinstance(node, InteractionNode):
             result = all_inputs.get(
@@ -288,14 +339,13 @@ class SequentialExecutor:
         elif isinstance(variant, InferenceNode):
             from huggingface_hub import InferenceClient
 
+            if not variant._task_fetched:
+                variant._fetch_model_info()
             client = InferenceClient(model=variant._model)
-            input_value = all_inputs.get(
-                "input",
-                all_inputs.get(variant._input_ports[0])
-                if variant._input_ports
-                else None,
-            )
-            result = client.text_generation(input_value) if input_value else None
+            inference_inputs = {
+                k: v for k, v in all_inputs.items() if k in variant._input_ports
+            }
+            result = _call_inference_task(client, variant._task, inference_inputs)
 
         else:
             result = None

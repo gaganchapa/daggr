@@ -58,6 +58,9 @@
 				class="gr-input"
 				disabled={!isInputNode}
 				{value}
+				min={comp.props?.minimum}
+				max={comp.props?.maximum}
+				step={comp.props?.step}
 				oninput={handleNumberInput}
 			/>
 		</div>

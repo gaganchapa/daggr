@@ -2,8 +2,8 @@
 	interface Props {
 		label: string;
 		value: number;
-		minimum?: number;
-		maximum?: number;
+		min?: number;
+		max?: number;
 		step?: number;
 		disabled?: boolean;
 		onchange?: (value: number) => void;
@@ -12,8 +12,8 @@
 	let { 
 		label, 
 		value, 
-		minimum = 0, 
-		maximum = 100, 
+		min = 0, 
+		max = 100, 
 		step = 1, 
 		disabled = false,
 		onchange 
@@ -21,7 +21,7 @@
 
 	let rangeEl: HTMLInputElement | null = $state(null);
 
-	let percentage = $derived(((value - minimum) / (maximum - minimum)) * 100);
+	let percentage = $derived(((value - min) / (max - min)) * 100);
 
 	$effect(() => {
 		if (rangeEl) {
@@ -38,7 +38,7 @@
 		const target = e.target as HTMLInputElement;
 		let newValue = parseFloat(target.value);
 		if (!isNaN(newValue)) {
-			newValue = Math.min(Math.max(newValue, minimum), maximum);
+			newValue = Math.min(Math.max(newValue, min), max);
 			onchange?.(newValue);
 		}
 	}
@@ -51,27 +51,27 @@
 			type="number"
 			class="number-input"
 			{value}
-			min={minimum}
-			max={maximum}
+			min={min}
+			max={max}
 			{step}
 			{disabled}
 			oninput={handleNumberInput}
 		/>
 	</div>
 	<div class="slider-container">
-		<span class="min-value">{minimum}</span>
+		<span class="min-value">{min}</span>
 		<input
 			bind:this={rangeEl}
 			type="range"
 			class="range-input"
 			{value}
-			min={minimum}
-			max={maximum}
+			min={min}
+			max={max}
 			{step}
 			{disabled}
 			oninput={handleRangeInput}
 		/>
-		<span class="max-value">{maximum}</span>
+		<span class="max-value">{max}</span>
 	</div>
 </div>
 

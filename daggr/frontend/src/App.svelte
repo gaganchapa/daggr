@@ -534,7 +534,11 @@
 	}
 
 	function getComponentValue(node: GraphNode, comp: GradioComponentData): any {
-		return inputValues[node.id]?.[comp.port_name] ?? comp.value ?? '';
+		const nodeInputs = inputValues[node.id];
+		if (nodeInputs && comp.port_name in nodeInputs) {
+			return nodeInputs[comp.port_name];
+		}
+		return comp.value ?? '';
 	}
 
 	function handleItemListChange(nodeId: string, itemIndex: number, fieldName: string, value: any) {
