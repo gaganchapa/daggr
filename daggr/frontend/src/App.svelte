@@ -53,6 +53,7 @@
 	let tokenInputValue = $state('');
 	let loginLoading = $state(false);
 	let loginError = $state('');
+	let hasShownPersistencePrompt = $state(false);
 
 	const HF_TOKEN_KEY = 'daggr_hf_token';
 
@@ -482,6 +483,11 @@
 							const resultSnapshot = node.output_components.map((c: GradioComponentData) => ({ ...c }));
 							nodeResults[completedNode] = [...nodeResults[completedNode], resultSnapshot];
 							selectedResultIndex[completedNode] = nodeResults[completedNode].length - 1;
+
+							if (isOnSpaces && !hfUser && !hasShownPersistencePrompt) {
+								hasShownPersistencePrompt = true;
+								showLoginTooltip = true;
+							}
 						}
 					}
 				}
@@ -1290,19 +1296,17 @@
 	{:else}
 		<div class="login-section">
 			<button class="login-btn" onclick={() => showLoginTooltip = !showLoginTooltip} title="Login with Hugging Face">
-				<svg width="18" height="18" viewBox="0 0 95 88" fill="currentColor">
-					<path d="M47.5 0C26.4 0 9.2 17.2 9.2 38.3c0 11.8 5.4 22.4 13.8 29.4-1.5 2.9-3.5 7.2-3.5 10.6 0 6.1 3.7 9.7 8.6 9.7 3.8 0 7.8-2.3 11.8-5.8 2.4.4 4.9.6 7.5.6s5.1-.2 7.5-.6c4 3.5 8 5.8 11.8 5.8 4.9 0 8.6-3.6 8.6-9.7 0-3.4-2-7.7-3.5-10.6 8.4-7 13.8-17.6 13.8-29.4C85.8 17.2 68.6 0 47.5 0z"/>
-					<ellipse cx="33" cy="38" rx="8" ry="10" fill="#1a1a1a"/>
-					<ellipse cx="62" cy="38" rx="8" ry="10" fill="#1a1a1a"/>
-					<ellipse cx="35" cy="36" rx="3" ry="4" fill="#fff"/>
-					<ellipse cx="64" cy="36" rx="3" ry="4" fill="#fff"/>
-					<path d="M35 54c0 0 5 8 12.5 8s12.5-8 12.5-8" stroke="#1a1a1a" stroke-width="3" fill="none" stroke-linecap="round"/>
-				</svg>
+				<img src="/daggr-assets/hf-logo-pirate.png" alt="HF" class="hf-logo-icon" />
 				<span>Login</span>
 			</button>
 			{#if showLoginTooltip}
 				<div class="login-tooltip">
 					<div class="login-tooltip-header">Login with Hugging Face</div>
+					{#if isOnSpaces}
+						<p class="login-tooltip-desc login-tooltip-highlight">
+							Login to save your outputs and resume your work later.
+						</p>
+					{/if}
 					<p class="login-tooltip-desc">
 						Your token is used to authenticate with Hugging Face APIs for InferenceNode calls and ZeroGPU-powered Spaces. Create a token with <strong>Read</strong> scope (or <strong>Fine-grained</strong> with Inference API access) at <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>
 					</p>
@@ -1625,9 +1629,10 @@
 		color: #f97316;
 	}
 
-	.login-btn svg {
+	.hf-logo-icon {
 		width: 18px;
 		height: 18px;
+		object-fit: contain;
 	}
 
 	.login-tooltip {
@@ -1663,6 +1668,15 @@
 
 	.login-tooltip-desc a:hover {
 		text-decoration: underline;
+	}
+
+	.login-tooltip-highlight {
+		background: rgba(249, 115, 22, 0.15);
+		border: 1px solid rgba(249, 115, 22, 0.3);
+		border-radius: 6px;
+		padding: 8px 10px;
+		color: #f97316;
+		font-weight: 500;
 	}
 
 	.login-token-input {
