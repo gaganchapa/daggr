@@ -542,6 +542,21 @@ Use sheets to work on multiple projects within the same workflow. For example, i
 
 The sheet selector appears in the title bar. Click to switch between sheets, create new ones, rename them (double-click), or delete them.
 
+### Result History and Provenance Tracking
+
+Every time a node runs, Daggr saves not just the output, but also a snapshot of all input values at that moment. This enables powerful exploratory workflows:
+
+**Browsing previous results**: Use the `‹` and `›` arrows in the node footer to navigate through all cached results for that node (shown as "1/3", "2/3", etc.).
+
+**Automatic input restoration**: When you select a previous result, Daggr automatically restores the input values that produced it. This means you can:
+
+1. Generate multiple variations by running a node several times with different inputs
+2. Browse through your results to find the best one
+3. When you select a result, see exactly what inputs created it
+4. Continue your workflow from that point with all the original context intact
+
+This is especially useful for creative workflows where you want to explore different prompt variations, compare outputs, and then continue from the best result.
+
 ### How Persistence Works
 
 | Environment | User Status | Persistence |
