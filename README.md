@@ -504,7 +504,12 @@ export HF_TOKEN=hf_xxxxx
 
 ## LLM-Friendly Error Messages
 
-Daggr is designed to be LLM-friendly, making it easy for AI coding assistants to generate and debug workflows. When you (or an LLM) make a mistake, Daggr provides detailed, actionable error messages with suggestions:
+Daggr is designed to be LLM-friendly, making it easy for AI coding assistants to generate and debug workflows. 
+
+<img width="3444" height="2342" alt="image" src="https://github.com/user-attachments/assets/b054d648-0f75-43a8-9335-1480d6bf9263" />
+
+
+When you (or an LLM) make a mistake, Daggr provides detailed, actionable error messages with suggestions:
 
 **Invalid API endpoint:**
 ```
