@@ -690,6 +690,28 @@ class DaggrServer:
                 return f"/file{value}"
         return value
 
+    def _validate_file_value(self, value: Any, comp_type: str) -> str | None:
+        """Validate that a value is appropriate for a file-type component.
+        Returns an error message if invalid, None if valid."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return None
+        if isinstance(value, dict):
+            if "url" in value or "path" in value:
+                return None
+            keys = list(value.keys())
+            if keys:
+                return (
+                    f"Expected a file path string for {comp_type}, but got a dict "
+                    f"with keys {keys}. If using postprocess, extract the path: "
+                    f"e.g., `postprocess=lambda x: x['{keys[0]}']`"
+                )
+            return (
+                f"Expected a file path string for {comp_type}, but got an empty dict."
+            )
+        return f"Expected a file path string for {comp_type}, but got {type(value).__name__}."
+
     def _process_audio_value(self, value: Any) -> Any:
         if isinstance(value, tuple) and len(value) == 2:
             sample_rate, audio_data = value
@@ -766,11 +788,12 @@ class DaggrServer:
 
     def _build_output_components(
         self, node, result: Any = None
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], str | None]:
         if not node._output_components:
-            return []
+            return [], None
 
         components = []
+        validation_error = None
         for port_name, comp in node._output_components.items():
             if comp is None:
                 continue
@@ -791,10 +814,13 @@ class DaggrServer:
                 if comp_type == "audio":
                     value = self._process_audio_value(value)
                 elif comp_type in ("image", "video", "file", "model3d"):
+                    error = self._validate_file_value(value, comp_type)
+                    if error and validation_error is None:
+                        validation_error = error
                     value = self._file_to_url(value)
                 comp_data["value"] = value
             components.append(comp_data)
-        return components
+        return components, validation_error
 
     def _build_scattered_items(
         self, node_name: str, result: Any = None
@@ -1077,7 +1103,7 @@ class DaggrServer:
             current_y = y_start
             for node_name in depth_nodes:
                 node = self.graph.nodes[node_name]
-                output_comps = self._build_output_components(node)
+                output_comps, _ = self._build_output_components(node)
                 num_ports = max(
                     len(node._input_ports or []), len(node._output_ports or [])
                 )
@@ -1153,7 +1179,9 @@ class DaggrServer:
                     }
                 )
 
-            output_components = self._build_output_components(node, result)
+            output_components, validation_error = self._build_output_components(
+                node, result
+            )
             scattered_items = (
                 self._build_scattered_items(node_name, result) if is_scattered else []
             )
@@ -1226,6 +1254,7 @@ class DaggrServer:
                     "is_local": is_local,
                     "variants": variants,
                     "selected_variant": selected_variant,
+                    "validation_error": validation_error,
                 }
             )
 
@@ -1648,6 +1677,7 @@ class DaggrServer:
             graph_data["type"] = "error"
             graph_data["run_id"] = run_id
             graph_data["error"] = str(e)
+            graph_data["nodes_to_clear"] = nodes_to_execute
             if error_node:
                 graph_data["node"] = error_node
                 graph_data["completed_node"] = error_node

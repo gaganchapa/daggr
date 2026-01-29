@@ -389,6 +389,19 @@
 				currentSheetId = data.data.sheet_id;
 			}
 			
+			if (data.data.nodes) {
+				let hasNewErrors = false;
+				for (const node of data.data.nodes) {
+					if (node.validation_error) {
+						nodeErrors[node.name] = node.validation_error;
+						hasNewErrors = true;
+					}
+				}
+				if (hasNewErrors) {
+					nodeErrors = { ...nodeErrors };
+				}
+			}
+			
 			if (data.data.persisted_results) {
 				for (const [nodeName, results] of Object.entries(data.data.persisted_results as Record<string, any[]>)) {
 					if (results && results.length > 0) {
@@ -456,11 +469,14 @@
 			const errorNode = data.node || data.completed_node;
 			if (errorNode) {
 				nodeErrors[errorNode] = data.error;
-				delete nodeStartTimes[errorNode];
-				runningNodes.delete(errorNode);
-				runningNodes = new Set(runningNodes);
-				stopTimerIfNoRunning();
 			}
+			const nodesToClear = data.nodes_to_clear || (errorNode ? [errorNode] : []);
+			for (const nodeName of nodesToClear) {
+				delete nodeStartTimes[nodeName];
+				runningNodes.delete(nodeName);
+			}
+			runningNodes = new Set(runningNodes);
+			stopTimerIfNoRunning();
 		} else if (data.type === 'node_complete' || data.type === 'error') {
 			const completedNode = data.completed_node;
 			
@@ -484,6 +500,17 @@
 			
 			if (data.nodes) {
 				graphData = { ...graphData!, nodes: data.nodes, edges: data.edges || graphData!.edges };
+				
+				let hasNewErrors = false;
+				for (const node of data.nodes) {
+					if (node.validation_error) {
+						nodeErrors[node.name] = node.validation_error;
+						hasNewErrors = true;
+					}
+				}
+				if (hasNewErrors) {
+					nodeErrors = { ...nodeErrors };
+				}
 				
 				if (completedNode) {
 					const node = data.nodes?.find((n: GraphNode) => n.name === completedNode);
@@ -925,10 +952,6 @@
 		const runId = `${nodeName}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 		
 		runningNodes.add(nodeName);
-		const ancestors = getAncestors(nodeName);
-		for (const ancestor of ancestors) {
-			runningNodes.add(ancestor);
-		}
 		runningNodes = new Set(runningNodes);
 		delete nodeExecutionTimes[nodeName];
 		

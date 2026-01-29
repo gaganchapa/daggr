@@ -97,6 +97,10 @@
 		error = null;
 		
 		try {
+			if (currentModelUrl) {
+				viewer.resetModel();
+			}
+			
 			await viewer.loadModel(url, {
 				pluginOptions: {
 					obj: {
@@ -107,6 +111,7 @@
 			
 			if (mounted) {
 				currentModelUrl = url;
+				viewer.resetCamera();
 			}
 		} catch (e) {
 			if (!mounted) return;

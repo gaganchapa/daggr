@@ -655,15 +655,20 @@ class AsyncExecutor:
         return {"_scattered_results": list(results), "_items": items}
 
     def _wrap_file_input(self, value: Any) -> Any:
+        from pathlib import Path
+
         from gradio_client import handle_file
 
         if isinstance(value, FileValue):
             return handle_file(str(value))
 
-        if isinstance(value, str) and value.startswith("data:"):
-            file_path = self._save_data_url_to_file(value)
-            if file_path:
-                return handle_file(file_path)
+        if isinstance(value, str):
+            if value.startswith("data:"):
+                file_path = self._save_data_url_to_file(value)
+                if file_path:
+                    return handle_file(file_path)
+            elif Path(value).exists():
+                return handle_file(value)
 
         return value
 
