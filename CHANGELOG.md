@@ -1,5 +1,11 @@
 # daggr
 
+## 0.5.4
+
+### Features
+
+- [#27](https://github.com/gradio-app/daggr/pull/27) [`3952b2c`](https://github.com/gradio-app/daggr/commit/3952b2ccf30e7d18994f23049c2a2e84b323cfd6) - changes.  Thanks @abidlabs!
+
 ## 0.5.3
 
 ### Features
