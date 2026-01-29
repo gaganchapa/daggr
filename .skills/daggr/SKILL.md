@@ -180,6 +180,14 @@ daggr workflow.py  # Starts server with hot reload at http://127.0.0.1:7860
 rm -rf ~/.cache/huggingface/daggr/*.db
 ```
 
+## Authentication
+
+**Local development:** Use `hf auth login` or set `HF_TOKEN` env var. This enables ZeroGPU quota tracking, private Spaces access, and gated models.
+
+**Deployed Spaces:** Users can click "Login" in the UI and paste their HF token. This enables persistence (sheets) so they can save outputs and resume work later. The token is stored in browser localStorage.
+
+**When deploying:** Pass secrets via `--secret HF_TOKEN=xxx` if your workflow needs server-side auth (e.g., for gated models in FnNode). Warning: this uses the deployer's token for all users.
+
 ## Deploy to Hugging Face Spaces
 
 Only deploy if the user has explicitly asked to publish/deploy their workflow.
