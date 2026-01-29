@@ -47,6 +47,8 @@ node = GradioNode(
 )
 ```
 
+Search Spaces: `https://huggingface.co/api/spaces/semantic-search?q=text+to+speech&sdk=gradio`
+
 ### FnNode - Python Functions
 
 ```python
@@ -161,11 +163,4 @@ python workflow.py  # Starts web server at http://127.0.0.1:7860
 **Troubleshooting:** Clear cache if you encounter stale state issues:
 ```bash
 rm -rf ~/.cache/huggingface/daggr/*.db
-```
-
-## Finding Spaces (optional)
-
-Search for Gradio Spaces by task:
-```bash
-curl "https://huggingface.co/api/spaces/semantic-search?q=text+to+speech&sdk=gradio"
 ```
