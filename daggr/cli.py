@@ -10,7 +10,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 INITIAL_PORT_VALUE = int(os.getenv("DAGGR_SERVER_PORT", "7860"))
 TRY_NUM_PORTS = int(os.getenv("DAGGR_NUM_PORTS", "100"))
 
