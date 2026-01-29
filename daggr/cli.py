@@ -397,6 +397,8 @@ sdk: gradio
 sdk_version: "{_get_gradio_version()}"
 app_file: app.py
 pinned: false
+tags:
+  - daggr
 ---
 
 # {space_title}
