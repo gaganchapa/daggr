@@ -46,7 +46,7 @@ img = GradioNode("Tongyi-MAI/Z-Image-Turbo", api_name="/generate",
     outputs={"image": gr.Image()})
 ```
 
-Find Spaces (describe what you need): `https://huggingface.co/api/spaces/semantic-search?q=generate+music+for+a+video&sdk=gradio`
+Find Spaces with semantic queries (describe what you need): `https://huggingface.co/api/spaces/semantic-search?q=generate+music+for+a+video&sdk=gradio`
 Or by category: `https://huggingface.co/api/spaces/semantic-search?category=image-generation&sdk=gradio`
 (categories: image-generation | video-generation | text-generation | speech-synthesis | music-generation | voice-cloning | image-editing | background-removal | image-upscaling | ocr | style-transfer | image-captioning)
 
@@ -113,6 +113,8 @@ final = FnNode(fn=combine,
    from gradio_client import Client
    Client("owner/space").view_api(return_format="dict")
    ```
+   Or view OpenAPI spec: `https://<space-subdomain>.hf.space/gradio_api/openapi.json`
+   (Spaces also have "Use via API" link in footer with endpoints and code snippets)
 
 2. **Handle files** (Gradio returns dicts):
    ```python
