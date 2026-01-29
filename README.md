@@ -567,13 +567,12 @@ Daggr uses edge colors to show you which parts of your workflow are up-to-date:
 | **Orange** | Fresh—the downstream node ran with this exact upstream value |
 | **Gray** | Stale—the upstream value has changed, or the downstream hasn't run yet |
 
-<!-- TODO: Add screenshot of fresh edge -->
-<!-- ![Fresh edge](docs/images/fresh-edge.png) -->
+<img width="957" height="418" alt="image" src="https://github.com/user-attachments/assets/4acd0ec2-9561-44fc-8a40-d09ab972d717" />
 
-<!-- TODO: Add screenshot of stale edge -->
-<!-- ![Stale edge](docs/images/stale-edge.png) -->
+<img width="957" height="418" alt="image" src="https://github.com/user-attachments/assets/683e7cbe-779f-44a9-9401-a6aafc57a936" />
 
-Edges become stale when:
+
+Edges are stale when:
 - You edit an input value (e.g., change a text prompt)
 - You select a different cached result on an upstream node
 - A downstream node hasn't been run yet
