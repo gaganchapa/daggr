@@ -9,7 +9,7 @@
   </div>
 </h3>
 
-`daggr` is a Python library for building AI workflows that connect [Gradio](https://github.com/gradio-app/gradio) apps, ML models (through [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/en/index)), and custom Python functions. It automatically generates a visual canvas for your workflow allowing you to inspect intermediate outputs, rerun any step any number of times, and also preserves state for complex or long-running workflows.
+`daggr` is a Python library for building AI workflows that connect [Gradio](https://github.com/gradio-app/gradio) apps, ML models (through [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/en/index)), and custom Python functions. It automatically generates a visual canvas for your workflow allowing you to inspect intermediate outputs, rerun any step any number of times, and preserves state for complex or long-running workflows. Daggr also tracks **provenance**—when you browse through previous results, it automatically restores the exact inputs that produced each output, and visually indicates which parts of your workflow are stale.
 
 
 
@@ -85,6 +85,7 @@ Use Daggr when:
 * You want to define an AI workflow in Python involving Gradio Spaces, inference providers, or custom functions
 * The workflow is complex enough that inspecting intermediate outputs or rerunning individual steps is useful
 * You need a fixed pipeline that you or others can run with different inputs
+* You want to explore variations—generate multiple outputs, compare them, and always know exactly what inputs produced each result
 
 **Why not... ComfyUI?** ComfyUI is a visual node editor where you build workflows by dragging and connecting nodes. Daggr takes a code-first approach: you define workflows in Python and the visual canvas is generated automatically. If you prefer writing code over visual editing, Daggr may be a better fit. In addition, Daggr works with Gradio Spaces and Hugging Face models directly, no need for specialized nodes.
 
@@ -555,7 +556,37 @@ Every time a node runs, Daggr saves not just the output, but also a snapshot of 
 3. When you select a result, see exactly what inputs created it
 4. Continue your workflow from that point with all the original context intact
 
-This is especially useful for creative workflows where you want to explore different prompt variations, compare outputs, and then continue from the best result.
+**Cascading restoration**: When you toggle through results on a node, Daggr also automatically selects the matching result on downstream nodes (if one exists). For example, if you generated 3 images and removed the background from 2 of them, selecting image #1 will automatically show background-removal result #1.
+
+#### Visual Staleness Indicators
+
+Daggr uses edge colors to show you which parts of your workflow are up-to-date:
+
+| Edge Color | Meaning |
+|------------|---------|
+| **Orange** | Fresh—the downstream node ran with this exact upstream value |
+| **Gray** | Stale—the upstream value has changed, or the downstream hasn't run yet |
+
+<!-- TODO: Add screenshot of fresh edge -->
+<!-- ![Fresh edge](docs/images/fresh-edge.png) -->
+
+<!-- TODO: Add screenshot of stale edge -->
+<!-- ![Stale edge](docs/images/stale-edge.png) -->
+
+Edges become stale when:
+- You edit an input value (e.g., change a text prompt)
+- You select a different cached result on an upstream node
+- A downstream node hasn't been run yet
+
+This visual feedback helps you understand at a glance which results are current and which need to be re-run. It's especially useful in long workflows where you might forget which steps you've already executed with your current inputs.
+
+**Example workflow:**
+1. Generate an image with prompt "A cheetah in the savanna" → edge turns orange
+2. Edit the prompt to "A lion in the jungle" → edge turns gray (stale)
+3. Re-run the image generation → edge turns orange again
+4. Run the background removal node → that edge also turns orange
+
+This provenance tracking is particularly valuable for creative workflows where you're exploring variations and want to always know exactly what inputs produced each output.
 
 ### How Persistence Works
 
