@@ -23,26 +23,22 @@
 	onMount(() => {
 		mounted = true;
 
-		const preventScrollOnFocus = (e: FocusEvent) => {
-			if (canvas && e.target === canvas) {
-				const scrollX = window.scrollX;
-				const scrollY = window.scrollY;
-				requestAnimationFrame(() => {
-					window.scrollTo(scrollX, scrollY);
-				});
-			}
-		};
-
-		document.addEventListener('focusin', preventScrollOnFocus);
-
 		return () => {
 			mounted = false;
-			document.removeEventListener('focusin', preventScrollOnFocus);
 			if (viewer) {
 				viewer.dispose();
 				viewer = null;
 			}
 		};
+	});
+
+	$effect(() => {
+		if (canvas) {
+			const originalFocus = canvas.focus.bind(canvas);
+			canvas.focus = (options?: FocusOptions) => {
+				originalFocus({ ...options, preventScroll: true });
+			};
+		}
 	});
 
 	$effect(() => {
