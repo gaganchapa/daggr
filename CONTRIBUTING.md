@@ -26,7 +26,7 @@ We welcome contributions that:
    ```
 
 4. Build the frontend:
-   The project includes a Svelte-based frontend that must be built for the app to function correctly.
+   The project includes a Svelte-based frontend that must be built for the app to function correctly (requires Node 24+ and npm 11+).
 
    ```bash
    cd daggr/frontend
