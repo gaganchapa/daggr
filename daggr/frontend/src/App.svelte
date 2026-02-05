@@ -1151,12 +1151,6 @@
 >
 	<div class="grid-bg"></div>
 
-	{#if !wsConnected}
-		<div class="connection-status">Connecting...</div>
-	{:else if !graphData}
-		<div class="connection-status">Loading graph...</div>
-	{/if}
-
 	<div 
 		class="canvas-transform"
 		style="transform: translate({transform.x}px, {transform.y}px) scale({transform.scale})"
@@ -1394,7 +1388,11 @@
 		{/if}
 	</div>
 
-	{#if hfUser}
+	{#if !wsConnected}
+		<div class="connection-status">Connecting...</div>
+	{:else if !graphData}
+		<div class="connection-status">Loading graph...</div>
+	{:else if hfUser}
 		<div class="hf-user">
 			{#if hfUser.avatar_url}
 				<img src={hfUser.avatar_url} alt="" class="hf-avatar" />
