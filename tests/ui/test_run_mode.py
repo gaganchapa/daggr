@@ -57,11 +57,11 @@ def test_run_mode_dropdown_and_single_step(page: Page, temp_db: str):
         )
         expect(to_here_option).to_be_visible()
 
-        # Default is now "Run this step"
-        expect(step_option).to_have_class(re.compile(r"active"))
+        # Default is "Run to here"
+        expect(to_here_option).to_have_class(re.compile(r"active"))
 
-        # Select "Run to here" and verify icon changes to double play
-        to_here_option.click()
+        # Select "Run this step" and verify icon changes to single play
+        step_option.click()
         expect(run_mode_menu).to_be_hidden()
 
         page.wait_for_function(
@@ -71,7 +71,7 @@ def test_run_mode_dropdown_and_single_step(page: Page, temp_db: str):
                     const name = node.querySelector('.node-name');
                     if (name && name.textContent === 'double') {
                         const icon = node.querySelector('.run-btn .run-icon-svg');
-                        return icon && icon.classList.contains('run-icon-double');
+                        return icon && !icon.classList.contains('run-icon-double');
                     }
                 }
                 return false;
@@ -79,14 +79,14 @@ def test_run_mode_dropdown_and_single_step(page: Page, temp_db: str):
             timeout=5000,
         )
 
-        # Select "Run this step" and verify icon changes back to single play
+        # Select "Run to here" and verify icon changes back to double play
         run_mode_toggle.click()
         expect(run_mode_menu).to_be_visible()
 
-        step_option = page.locator(
-            ".run-mode-menu .run-mode-option:has-text('Run this step')"
+        to_here_option = page.locator(
+            ".run-mode-menu .run-mode-option:has-text('Run to here')"
         )
-        step_option.click()
+        to_here_option.click()
 
         page.wait_for_function(
             """() => {
@@ -95,7 +95,7 @@ def test_run_mode_dropdown_and_single_step(page: Page, temp_db: str):
                     const name = node.querySelector('.node-name');
                     if (name && name.textContent === 'double') {
                         const icon = node.querySelector('.run-btn .run-icon-svg');
-                        return icon && !icon.classList.contains('run-icon-double');
+                        return icon && icon.classList.contains('run-icon-double');
                     }
                 }
                 return false;

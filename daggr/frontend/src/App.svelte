@@ -40,6 +40,7 @@
 	let nodeRunModes = $state<Record<string, 'step' | 'toHere'>>({});
 	let runModeMenuOpen = $state<string | null>(null);
 	let runModeVersion = $state(0);
+	let highlightedNodes = $state<Set<string>>(new Set());
 
 	let sheets = $state<Sheet[]>([]);
 	let currentSheetId = $state<string | null>(null);
@@ -780,6 +781,8 @@
 			is_gathered: boolean;
 			isStale: boolean;
 			forkPaths?: string[];
+			fromNodeName: string;
+			toNodeName: string;
 		}[] = [];
 		
 		for (const edge of edges) {
@@ -833,7 +836,7 @@
 					`M ${forkStart} ${y2} L ${x2} ${y2}`,
 					`M ${forkStart} ${y2} L ${x2} ${y2 + forkSpread}`,
 				];
-				paths.push({ id: edge.id, d, is_scattered, is_gathered, isStale, forkPaths });
+				paths.push({ id: edge.id, d, is_scattered, is_gathered, isStale, forkPaths, fromNodeName: fromNode.name, toNodeName: toNode.name });
 			} else if (is_gathered) {
 				const forkEnd = x1 + 30;
 				const forkSpread = 8;
@@ -843,10 +846,10 @@
 					`M ${x1} ${y1 + forkSpread} L ${forkEnd} ${y1}`,
 				];
 				const d = `M ${forkEnd} ${y1} C ${forkEnd + cp - 30} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`;
-				paths.push({ id: edge.id, d, is_scattered, is_gathered, isStale, forkPaths });
+				paths.push({ id: edge.id, d, is_scattered, is_gathered, isStale, forkPaths, fromNodeName: fromNode.name, toNodeName: toNode.name });
 			} else {
 				const d = `M ${x1} ${y1} C ${x1 + cp} ${y1}, ${x2 - cp} ${y2}, ${x2} ${y2}`;
-				paths.push({ id: edge.id, d, is_scattered, is_gathered, isStale });
+				paths.push({ id: edge.id, d, is_scattered, is_gathered, isStale, fromNodeName: fromNode.name, toNodeName: toNode.name });
 			}
 		}
 		
@@ -1001,6 +1004,19 @@
 		runModeMenuOpen = null;
 	}
 
+	function highlightRunTargets(nodeName: string, mode: 'step' | 'toHere') {
+		if (mode === 'step') {
+			highlightedNodes = new Set([nodeName]);
+		} else {
+			const ancestors = getAncestors(nodeName);
+			highlightedNodes = new Set([nodeName, ...ancestors]);
+		}
+	}
+
+	function clearHighlight() {
+		highlightedNodes = new Set();
+	}
+
 	function toggleRunModeMenu(e: MouseEvent, nodeName: string) {
 		e.stopPropagation();
 		if (runModeMenuOpen === nodeName) {
@@ -1012,7 +1028,7 @@
 
 	function getRunMode(nodeName: string): 'step' | 'toHere' {
 		void runModeVersion;
-		return nodeRunModes[nodeName] ?? 'step';
+		return nodeRunModes[nodeName] ?? 'toHere';
 	}
 
 	function getBadgeStyle(type: string): string {
@@ -1187,10 +1203,10 @@
 	>
 		<svg class="edges-svg">
 			{#each edgePaths as edge (edge.id)}
-				<path d={edge.d} class="edge-path" class:stale={edge.isStale} />
+				<path d={edge.d} class="edge-path" class:stale={edge.isStale} class:will-run={highlightedNodes.has(edge.fromNodeName) && highlightedNodes.has(edge.toNodeName)} />
 				{#if edge.forkPaths}
 					{#each edge.forkPaths as forkD}
-						<path d={forkD} class="edge-path edge-fork" class:stale={edge.isStale} />
+						<path d={forkD} class="edge-path edge-fork" class:stale={edge.isStale} class:will-run={highlightedNodes.has(edge.fromNodeName) && highlightedNodes.has(edge.toNodeName)} />
 					{/each}
 				{/if}
 			{/each}
@@ -1201,6 +1217,7 @@
 			{@const timeDisplay = getNodeTimeDisplay(node.name)}
 			<div 
 				class="node"
+				class:will-run={highlightedNodes.has(node.name)}
 				style="left: {node.x}px; top: {node.y}px; width: {NODE_WIDTH}px;"
 			>
 				{#if timeDisplay}
@@ -1221,11 +1238,11 @@
 								class:running={runningNodes.has(node.name)}
 								class:disabled={runningNodes.has(node.name)}
 								onclick={(e) => handleRunNode(e, node.name)}
-								title={runningNodes.has(node.name) ? "Running..." : ((nodeRunModes[node.name] ?? 'step') === 'toHere' ? "Run to here" : "Run this step")}
+								title={runningNodes.has(node.name) ? "Running..." : ((nodeRunModes[node.name] ?? 'toHere') === 'toHere' ? "Run to here" : "Run this step")}
 								role="button"
 								tabindex="0"
 							>
-								{#if node.is_map_node || (nodeRunModes[node.name] ?? 'step') === 'toHere'}
+								{#if node.is_map_node || (nodeRunModes[node.name] ?? 'toHere') === 'toHere'}
 									<svg class="run-icon-svg run-icon-double" viewBox="0 0 14 12" fill="currentColor">
 										<path d="M2 1 L10 6 L2 11 Z" opacity="0.5" transform="translate(-2, 0)"/>
 										<path d="M2 1 L10 6 L2 11 Z" transform="translate(2, 0)"/>
@@ -1251,11 +1268,12 @@
 								</svg>
 							</span>
 							{#if runModeMenuOpen === node.name}
-								<div class="run-mode-menu">
+								<div class="run-mode-menu" onmouseleave={() => clearHighlight()}>
 									<button 
 										class="run-mode-option"
-										class:active={(nodeRunModes[node.name] ?? 'step') === 'step'}
-										onclick={(e) => { e.stopPropagation(); setRunMode(node.name, 'step'); }}
+										class:active={(nodeRunModes[node.name] ?? 'toHere') === 'step'}
+										onclick={(e) => { e.stopPropagation(); setRunMode(node.name, 'step'); clearHighlight(); }}
+										onmouseenter={() => highlightRunTargets(node.name, 'step')}
 									>
 										<svg class="run-mode-icon" viewBox="0 0 10 12" fill="currentColor">
 											<path d="M1 1 L9 6 L1 11 Z"/>
@@ -1264,8 +1282,9 @@
 									</button>
 									<button 
 										class="run-mode-option"
-										class:active={(nodeRunModes[node.name] ?? 'step') === 'toHere'}
-										onclick={(e) => { e.stopPropagation(); setRunMode(node.name, 'toHere'); }}
+										class:active={(nodeRunModes[node.name] ?? 'toHere') === 'toHere'}
+										onclick={(e) => { e.stopPropagation(); setRunMode(node.name, 'toHere'); clearHighlight(); }}
+										onmouseenter={() => highlightRunTargets(node.name, 'toHere')}
 									>
 										<svg class="run-mode-icon run-mode-icon-double" viewBox="0 0 14 12" fill="currentColor">
 											<path d="M2 1 L10 6 L2 11 Z" opacity="0.5" transform="translate(-2, 0)"/>
@@ -1981,6 +2000,7 @@
 	.edge-path {
 		fill: none;
 		stroke: var(--color-accent);
+		transition: stroke 0.15s ease, stroke-width 0.15s ease, filter 0.15s ease;
 		stroke-width: 2.5;
 		stroke-linecap: round;
 		transition: stroke 0.2s ease;
@@ -1988,6 +2008,12 @@
 
 	.edge-path.stale {
 		stroke: var(--neutral-500);
+	}
+
+	.edge-path.will-run {
+		stroke: var(--color-accent);
+		stroke-width: 3;
+		filter: drop-shadow(0 0 4px var(--color-accent));
 	}
 
 	.edge-fork {
@@ -2002,6 +2028,12 @@
 		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 		overflow: visible;
 		cursor: default;
+		transition: border-color 0.15s ease, box-shadow 0.15s ease;
+	}
+
+	.node.will-run {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 20px color-mix(in srgb, var(--color-accent) 50%, transparent), 0 4px 20px rgba(0, 0, 0, 0.5);
 	}
 
 	.exec-time {
