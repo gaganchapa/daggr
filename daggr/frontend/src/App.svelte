@@ -1231,8 +1231,8 @@
 										<path d="M2 1 L10 6 L2 11 Z" transform="translate(2, 0)"/>
 									</svg>
 								{:else}
-									<svg class="run-icon-svg" viewBox="0 0 10 10" fill="currentColor">
-										<path d="M2 1 L8 5 L2 9 Z"/>
+									<svg class="run-icon-svg" viewBox="0 0 14 12" fill="currentColor">
+										<path d="M3 1 L11 6 L3 11 Z"/>
 									</svg>
 								{/if}
 								{#if runningNodes.has(node.name)}
@@ -2164,14 +2164,9 @@
 	}
 
 	.run-icon-svg {
-		width: 10px;
-		height: 10px;
-		display: block;
-	}
-
-	.run-icon-svg.run-icon-double {
 		width: 14px;
 		height: 12px;
+		display: block;
 	}
 
 	@keyframes pulse {
