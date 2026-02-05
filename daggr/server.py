@@ -785,43 +785,6 @@ class DaggrServer:
             )
         return f"Expected a file path string for {comp_type}, but got {type(value).__name__}."
 
-    def _process_audio_value(self, value: Any) -> Any:
-        if isinstance(value, tuple) and len(value) == 2:
-            sample_rate, audio_data = value
-            if isinstance(sample_rate, int) and hasattr(audio_data, "shape"):
-                import hashlib
-                import wave
-
-                import numpy as np
-
-                from daggr.state import get_daggr_files_dir
-
-                audio_array = np.array(audio_data)
-                if audio_array.dtype in (np.float32, np.float64):
-                    audio_array = (audio_array * 32767).astype(np.int16)
-                elif audio_array.dtype != np.int16:
-                    audio_array = audio_array.astype(np.int16)
-
-                audio_hash = hashlib.md5(audio_array.tobytes()[:1024]).hexdigest()[:12]
-                filename = f"audio_{audio_hash}.wav"
-                files_dir = get_daggr_files_dir()
-                file_path = files_dir / filename
-
-                if not file_path.exists():
-                    n_channels = (
-                        1 if len(audio_array.shape) == 1 else audio_array.shape[1]
-                    )
-                    if len(audio_array.shape) > 1:
-                        audio_array = audio_array.flatten()
-                    with wave.open(str(file_path), "w") as wav_file:
-                        wav_file.setnchannels(n_channels)
-                        wav_file.setsampwidth(2)
-                        wav_file.setframerate(sample_rate)
-                        wav_file.writeframes(audio_array.tobytes())
-
-                return self._file_to_url(str(file_path))
-        return self._file_to_url(value)
-
     def _transform_file_paths(self, data: Any) -> Any:
         if isinstance(data, str):
             return self._file_to_url(data)
@@ -884,9 +847,7 @@ class DaggrServer:
                     )
                 else:
                     value = result
-                if comp_type == "audio":
-                    value = self._process_audio_value(value)
-                elif comp_type in ("image", "video", "file", "model3d"):
+                if comp_type in ("audio", "image", "video", "file", "model3d"):
                     error = self._validate_file_value(value, comp_type)
                     if error and validation_error is None:
                         validation_error = error
@@ -936,9 +897,7 @@ class DaggrServer:
                 else:
                     output = item_result
 
-                if output and item_output_type == "audio":
-                    output = self._process_audio_value(output)
-                elif output:
+                if output:
                     output = str(output)
 
                 items.append(

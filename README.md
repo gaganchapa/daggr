@@ -299,6 +299,54 @@ image_gen = GradioNode(
 )
 ```
 
+### File Handling
+
+> **Key difference from Gradio:** In daggr, all file-based data (images, audio, video, 3D models) is passed between nodes as **file path strings**. Gradio's `type` parameter (e.g., `Image(type="numpy")`) is ignored — daggr does not convert files to numpy arrays, PIL images, or any other in-memory format.
+
+This means:
+- **Inputs** to your node arrive as file path strings (e.g., `"/tmp/daggr/abc123.png"`)
+- **Outputs** from your node should be file path strings pointing to a file on disk
+
+If your node expects a different format, use `preprocess` to convert file paths on the way in, and `postprocess` to convert back to file paths on the way out. This works with all node types:
+
+```python
+from PIL import Image
+
+def load_image(inputs):
+    inputs["image"] = Image.open(inputs["image"])
+    return inputs
+
+def save_image(result):
+    out_path = "/tmp/processed.png"
+    result.save(out_path)
+    return out_path
+
+node = FnNode(
+    lambda image: image.rotate(90),
+    preprocess=load_image,
+    postprocess=save_image,
+    inputs={"image": gr.Image(label="Input")},
+    outputs={"output": gr.Image(label="Rotated")},
+)
+```
+
+For audio:
+
+```python
+import soundfile as sf
+
+def load_audio(inputs):
+    data, sr = sf.read(inputs["audio"])
+    inputs["audio"] = (sr, data)
+    return inputs
+
+def save_audio(result):
+    sr, data = result
+    out_path = "/tmp/processed.wav"
+    sf.write(out_path, data, sr)
+    return out_path
+```
+
 ### Node Concurrency
 
 Different node types have different concurrency behaviors:

@@ -4,6 +4,33 @@ from daggr import FnNode, Graph, InteractionNode
 from daggr.port import ItemList, Port, ScatteredPort
 
 
+class TestComponentTypeWarning:
+    def test_warns_when_type_explicitly_set(self):
+        import gradio as gr
+
+        with pytest.warns(
+            UserWarning, match="daggr ignores the `type` parameter"
+        ):
+            FnNode(
+                lambda image: image,
+                inputs={"image": gr.Image(type="numpy")},
+                outputs={"output": None},
+            )
+
+    def test_no_warning_when_type_not_set(self):
+        import gradio as gr
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            FnNode(
+                lambda image: image,
+                inputs={"image": gr.Image(label="Input")},
+                outputs={"output": None},
+            )
+
+
 class TestFnNode:
     def test_creates_from_function(self):
         def my_func(x: str, y: int) -> dict:
