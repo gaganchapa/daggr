@@ -60,6 +60,24 @@ class TestInteractionNode:
         assert node._interaction_type == "approve"
 
 
+class TestChoiceNodeName:
+    def test_choice_node_uses_custom_name_in_graph(self):
+        def step_a(x):
+            return {"output": x}
+
+        def step_b(x):
+            return {"output": x}
+
+        a = FnNode(step_a, name="variant_a")
+        b = FnNode(step_b, name="variant_b")
+        choice = a | b
+        choice.name = "Music generator"
+
+        graph = Graph("test", nodes=[choice])
+        assert "Music generator" in graph.nodes
+        assert graph.nodes["Music generator"] is choice
+
+
 class TestPort:
     def test_port_access(self):
         def process(x):
