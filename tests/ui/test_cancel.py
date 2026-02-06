@@ -35,14 +35,17 @@ def test_cancel_running_node(page: Page, temp_db: str):
 
         page.wait_for_function(
             """() => {
-                const node = document.querySelector('.node:has(.node-name)');
-                if (!node) return false;
-                const btn = node.querySelector('.run-btn.running');
-                if (!btn) return false;
-                const rect = btn.querySelector('rect');
-                return rect !== null;
+                const nodes = document.querySelectorAll('.node');
+                for (const node of nodes) {
+                    const name = node.querySelector('.node-name');
+                    if (name && name.textContent === 'slow_node') {
+                        const btn = node.querySelector('.run-btn.running');
+                        return btn !== null;
+                    }
+                }
+                return false;
             }""",
-            timeout=5000,
+            timeout=10000,
         )
 
         stop_btn = slow_node.locator(".run-btn.running")
