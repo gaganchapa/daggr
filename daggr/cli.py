@@ -678,9 +678,9 @@ def _create_app():
     captured_graph._validate_edges()
     server = DaggrServer(captured_graph)
 
-    print(
-        f"\n  daggr running at http://{os.environ['DAGGR_HOST']}:{os.environ['DAGGR_PORT']}\n"
-    )
+    base_url = f"http://{os.environ['DAGGR_HOST']}:{os.environ['DAGGR_PORT']}"
+    print(f"\n  UI running at: {base_url}")
+    print(f"  API server at: {base_url}/api\n")
 
     return server.app
 

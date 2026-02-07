@@ -106,8 +106,14 @@ def _get_theme(theme: "Theme | str | None") -> "Theme":
 
 
 class DaggrServer:
-    def __init__(self, graph: Graph, theme: "Theme | str | None" = None):
+    def __init__(
+        self,
+        graph: Graph,
+        theme: "Theme | str | None" = None,
+        api_server: bool = True,
+    ):
         self.graph = graph
+        self.api_server = api_server
         self.executor = AsyncExecutor(graph)
         self.state = SessionState(db_path=os.environ.get("DAGGR_DB_PATH"))
         self.app = FastAPI(title=graph.name)
@@ -309,17 +315,21 @@ class DaggrServer:
                 session, node_name, session_id, input_values, selected_results
             )
 
-        @self.app.get("/api/schema")
-        async def get_api_schema():
-            return self.graph.get_api_schema()
+        if self.api_server:
 
-        @self.app.post("/api/call")
-        async def call_workflow(request: Request):
-            return await self._execute_workflow_api(request, subgraph_id=None)
+            @self.app.get("/api/schema")
+            async def get_api_schema():
+                return self.graph.get_api_schema()
 
-        @self.app.post("/api/call/{subgraph_id}")
-        async def call_subgraph(subgraph_id: str, request: Request):
-            return await self._execute_workflow_api(request, subgraph_id=subgraph_id)
+            @self.app.post("/api/call")
+            async def call_workflow(request: Request):
+                return await self._execute_workflow_api(request, subgraph_id=None)
+
+            @self.app.post("/api/call/{subgraph_id}")
+            async def call_subgraph(subgraph_id: str, request: Request):
+                return await self._execute_workflow_api(
+                    request, subgraph_id=subgraph_id
+                )
 
         @self.app.websocket("/ws/{session_id}")
         async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -1866,7 +1876,9 @@ class DaggrServer:
             server.run_in_thread()
 
             local_url = f"http://{host}:{actual_port}"
-            print(f"\n  daggr running at {local_url}")
+            print(f"\n  UI running at: {local_url}")
+            if self.api_server:
+                print(f"  API server at: {local_url}/api")
 
             share_url = None
             if share:
@@ -1903,7 +1915,10 @@ class DaggrServer:
                 server.close()
         else:
             local_url = f"http://{host}:{actual_port}"
-            print(f"\n  daggr running at {local_url}\n")
+            print(f"\n  UI running at: {local_url}")
+            if self.api_server:
+                print(f"  API server at: {local_url}/api")
+            print()
             if open_browser:
                 threading.Timer(0.5, lambda: webbrowser.open_new_tab(local_url)).start()
             uvicorn.run(

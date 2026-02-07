@@ -1305,6 +1305,8 @@
 							<span 
 								class="run-btn"
 								onclick={(e) => handleRunNode(e, node.name)}
+								onmouseenter={() => highlightRunTargets(node.name, getRunMode(node.name))}
+								onmouseleave={() => clearHighlight()}
 								title={(nodeRunModes[node.name] ?? 'toHere') === 'toHere' ? "Run to here" : "Run this step"}
 								role="button"
 								tabindex="0"

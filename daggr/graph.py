@@ -430,6 +430,7 @@ class Graph:
         share: bool | None = None,
         open_browser: bool = True,
         theme: Theme | str | None = None,
+        api_server: bool = True,
         **kwargs,
     ):
         """Launch the graph as an interactive web application.
@@ -451,6 +452,8 @@ class Graph:
                 a string name like "default", "soft", "monochrome", "glass",
                 or a Hub theme like "gradio/seafoam". Defaults to the Gradio
                 default theme.
+            api_server: If True, expose the programmatic API endpoints
+                (/api/call, /api/schema). Defaults to True.
             **kwargs: Additional arguments passed to uvicorn.
         """
         from daggr.server import DaggrServer
@@ -461,7 +464,7 @@ class Graph:
             port = int(os.environ.get("GRADIO_SERVER_PORT", "7860"))
 
         self._startup_display()
-        server = DaggrServer(self, theme=theme)
+        server = DaggrServer(self, theme=theme, api_server=api_server)
         server.run(
             host=host, port=port, share=share, open_browser=open_browser, **kwargs
         )
@@ -570,7 +573,7 @@ class Graph:
                 _client_cache.set_dependency_hash(dep_id, current_sha)
                 return ("recorded", f"hash {current_sha[:7]} recorded")
             elif cached_sha == current_sha:
-                return ("matches", "hash matches")
+                return ("matches", f"hash {current_sha[:7]} matches")
             else:
                 changed.append(
                     {
